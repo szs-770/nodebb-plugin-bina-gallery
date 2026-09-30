@@ -86,7 +86,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'hooks'], function (api, al
 			'data-author': decode(item.user.displayname),
 			'data-userslug': item.user.userslug,
 		});
-		$('<img loading="lazy">').attr({ src: item.image, alt: decode(item.title) }).appendTo(a);
+		$('<img loading="lazy" decoding="async">').attr({ src: item.thumb || item.image, alt: decode(item.title) }).appendTo(a);
 		const overlay = $('<div class="bg-card__overlay"></div>').appendTo(a);
 		$('<div class="bg-card__title"></div>').html(item.title).appendTo(overlay);
 		const meta = $('<div class="bg-card__meta"></div>').appendTo(overlay);

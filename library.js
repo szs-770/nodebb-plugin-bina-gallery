@@ -16,8 +16,13 @@
  * and on the user's profile. Likes on comments keep counting towards reputation as usual.
  */
 
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
 const nodebb = require.main;
 const winston = nodebb.require('winston');
+const nconf = nodebb.require('nconf');
 
 const db = nodebb.require('./src/database');
 const meta = nodebb.require('./src/meta');
@@ -36,6 +41,9 @@ const MAX_SCAN = 2000;
 const SCORES_KEY = 'bina-gallery:scores';        // sorted set: uid -> creator score (net likes on creations)
 const CREATIONS_KEY = 'bina-gallery:creations';  // sorted set: uid -> number of creations
 const LEADERBOARD_SIZE = 50;
+const THUMB_DIR = 'bina-gallery';   // inside the uploads folder
+const GRID_WIDTH = 600;             // grid cards
+const FEATURED_WIDTH = 1400;        // "creation of the day" banner
 
 const SORTS = [
 	{ key: 'new', label: 'חדשות' },
@@ -302,12 +310,62 @@ async function getGalleryItems(uid, cid, sort) {
 	return list;
 }
 
+/* ----------------------------------------------------------- thumbnails */
+
+// The gallery grid shows small WebP copies of the images (the full image is only loaded in the
+// lightbox). Copies are made on first view with sharp and stored in uploads/bina-gallery/.
+// Anything that is not a local upload, or animated GIFs, is shown as is.
+const pendingThumbs = new Map();
+
+async function getThumb(url, width) {
+	const uploadUrl = `${nconf.get('relative_path')}${nconf.get('upload_url')}`;
+	if (typeof url !== 'string' || !url.startsWith(`${uploadUrl}/`) || /\.gif$/i.test(url)) {
+		return url;
+	}
+	const relative = decodeURIComponent(url.slice(uploadUrl.length + 1).split('?')[0]);
+	const uploadPath = nconf.get('upload_path');
+	const source = path.resolve(uploadPath, relative);
+	if (!source.startsWith(`${path.resolve(uploadPath)}${path.sep}`)) {
+		return url;
+	}
+	const name = `${crypto.createHash('sha1').update(relative).digest('hex').slice(0, 20)}-${width}.webp`;
+	const target = path.join(uploadPath, THUMB_DIR, name);
+	const thumbUrl = `${uploadUrl}/${THUMB_DIR}/${name}`;
+
+	try {
+		await fs.promises.access(target);
+		return thumbUrl;
+	} catch (e) { /* not created yet */ }
+
+	if (!pendingThumbs.has(target)) {
+		pendingThumbs.set(target, (async () => {
+			const sharp = nodebb.require('sharp');
+			await fs.promises.mkdir(path.dirname(target), { recursive: true });
+			const tmp = `${target}.${process.pid}.tmp`;
+			await sharp(source, { failOn: 'none' })
+				.rotate()
+				.resize({ width, withoutEnlargement: true })
+				.webp({ quality: 80 })
+				.toFile(tmp);
+			await fs.promises.rename(tmp, target);
+		})().finally(() => pendingThumbs.delete(target)));
+	}
+	try {
+		await pendingThumbs.get(target);
+		return thumbUrl;
+	} catch (err) {
+		winston.warn(`${LOG} could not create a thumbnail for ${url}: ${err.message}`);
+		return url;
+	}
+}
+
 function toItem(t, voteStatus, idx) {
 	return {
 		tid: t.tid,
 		slug: t.slug,
 		title: t.title,
 		image: t.thumbs[0].url,
+		thumb: t.thumbs[0].url,
 		pid: t.mainPid,
 		votes: parseInt(t.votes, 10) || 0,
 		replies: Math.max((parseInt(t.postcount, 10) || 1) - 1, 0),
@@ -325,10 +383,12 @@ function toItem(t, voteStatus, idx) {
 	};
 }
 
-async function toItems(list, uid) {
-	const voteStatus = uid > 0 ?
-		await posts.getVoteStatusByPostIDs(list.map(t => t.mainPid), uid) : null;
-	return list.map((t, i) => toItem(t, voteStatus, i));
+async function toItems(list, uid, width = GRID_WIDTH) {
+	const [voteStatus, thumbs] = await Promise.all([
+		uid > 0 ? posts.getVoteStatusByPostIDs(list.map(t => t.mainPid), uid) : null,
+		Promise.all(list.map(t => getThumb(t.thumbs[0].url, width))),
+	]);
+	return list.map((t, i) => ({ ...toItem(t, voteStatus, i), thumb: thumbs[i] }));
 }
 
 async function renderGallery(req, res, next) {
@@ -381,7 +441,7 @@ async function renderGallery(req, res, next) {
 	if (page === 1 && sort === 'new') {
 		const day = await getGalleryItems(req.uid, settings.cid, 'day');
 		if (day.length) {
-			[featured] = await toItems(day.slice(0, 1), req.uid);
+			[featured] = await toItems(day.slice(0, 1), req.uid, FEATURED_WIDTH);
 		}
 	}
 

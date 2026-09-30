@@ -18,7 +18,7 @@
 
 	{{{ if hasFeatured }}}
 	<a class="bg-featured bg-open" href="{config.relative_path}/topic/{featured.slug}" data-tid="{featured.tid}" data-pid="{featured.pid}" data-image="{featured.image}" data-title="{featured.title}" data-votes="{featured.votes}" data-upvoted="{featured.upvoted}" data-replies="{featured.replies}" data-author="{featured.user.displayname}" data-userslug="{featured.user.userslug}">
-		<img src="{featured.image}" alt="{featured.title}" loading="lazy">
+		<img src="{featured.thumb}" alt="{featured.title}">
 		<div class="bg-featured__info">
 			<span class="bg-featured__badge"><i class="fa-solid fa-crown"></i> יצירת היום</span>
 			<div class="bg-featured__title">{featured.title}</div>
@@ -66,7 +66,7 @@
 	<div class="bg-grid">
 		{{{ each items }}}
 		<a class="bg-card bg-open" href="{config.relative_path}/topic/{./slug}" data-tid="{./tid}" data-pid="{./pid}" data-image="{./image}" data-title="{./title}" data-votes="{./votes}" data-upvoted="{./upvoted}" data-replies="{./replies}" data-author="{./user.displayname}" data-userslug="{./user.userslug}">
-			<img src="{./image}" alt="{./title}" loading="lazy">
+			<img src="{./thumb}" alt="{./title}" loading="lazy" decoding="async">
 			<div class="bg-card__overlay">
 				<div class="bg-card__title">{./title}</div>
 				<div class="bg-card__meta">
