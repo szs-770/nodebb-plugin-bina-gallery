@@ -1,0 +1,75 @@
+{
+  "id": "nodebb-plugin-bina-gallery",
+  "name": "Bina Top Gallery",
+  "description": "גלריית יצירות: דף /gallery שמציג את הנושאים של קטגוריית הגלריה כרשת תמונות",
+  "library": "./library.js",
+  "hooks": [
+    {
+      "hook": "static:app.load",
+      "method": "init"
+    },
+    {
+      "hook": "filter:admin.header.build",
+      "method": "addAdminNavigation"
+    },
+    {
+      "hook": "filter:post.shouldQueue",
+      "method": "shouldQueue"
+    },
+    {
+      "hook": "filter:config.get",
+      "method": "appendConfig"
+    },
+    {
+      "hook": "static:api.routes",
+      "method": "addRoutes"
+    },
+    {
+      "hook": "action:post.upvote",
+      "method": "onUpvote"
+    },
+    {
+      "hook": "action:post.downvote",
+      "method": "onDownvote"
+    },
+    {
+      "hook": "action:post.unvote",
+      "method": "onUnvote"
+    },
+    {
+      "hook": "action:topic.post",
+      "method": "onTopicChange"
+    },
+    {
+      "hook": "action:topic.delete",
+      "method": "onTopicChange"
+    },
+    {
+      "hook": "action:topic.restore",
+      "method": "onTopicChange"
+    },
+    {
+      "hook": "action:topic.purge",
+      "method": "onTopicChange"
+    },
+    {
+      "hook": "action:topic.move",
+      "method": "onTopicMove"
+    },
+    {
+      "hook": "filter:helpers.getUserDataByUserSlug",
+      "method": "addProfileData"
+    }
+  ],
+  "templates": "templates",
+  "modules": {
+    "../client/gallery.js": "./public/gallery.js",
+    "../admin/plugins/bina-gallery.js": "./public/admin.js"
+  },
+  "scss": [
+    "public/gallery.scss"
+  ],
+  "scripts": [
+    "public/profile.js"
+  ]
+}
