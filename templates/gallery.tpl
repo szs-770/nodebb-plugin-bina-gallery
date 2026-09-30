@@ -23,7 +23,7 @@
 			<span class="bg-featured__badge"><i class="fa-solid fa-crown"></i> יצירת היום</span>
 			<div class="bg-featured__title">{featured.title}</div>
 			<div class="bg-featured__meta">
-				<span>{buildAvatar(featured.user, "20px", true)} {featured.user.displayname}</span>
+				<span>{{buildAvatar(featured.user, "20px", true)}} {featured.user.displayname}</span>
 				<span><i class="fa-solid fa-heart"></i> {featured.votes}</span>
 			</div>
 		</div>
@@ -46,7 +46,7 @@
 			{{{ each leaders }}}
 			<li class="bg-leader {{{ if ./top3 }}}bg-leader--top{{{ end }}}">
 				<span class="bg-leader__rank">{{{ if ./medal }}}{./medal}{{{ else }}}{./rank}{{{ end }}}</span>
-				<a class="bg-leader__user" href="{config.relative_path}/user/{./user.userslug}">{buildAvatar(./user, "36px", true)} <span>{./user.displayname}</span></a>
+				<a class="bg-leader__user" href="{config.relative_path}/user/{./user.userslug}">{{buildAvatar(./user, "36px", true)}} <span>{./user.displayname}</span></a>
 				<span class="bg-leader__creations" title="יצירות"><i class="fa-regular fa-image"></i> {./creations}</span>
 				<span class="bg-leader__score" title="ניקוד יוצר"><i class="fa-solid fa-heart"></i> {./score}</span>
 			</li>
@@ -70,7 +70,7 @@
 			<div class="bg-card__overlay">
 				<div class="bg-card__title">{./title}</div>
 				<div class="bg-card__meta">
-					<span class="bg-card__author">{buildAvatar(./user, "20px", true)} {./user.displayname}</span>
+					<span class="bg-card__author">{{buildAvatar(./user, "20px", true)}} {./user.displayname}</span>
 					<span class="bg-card__stats"><span class="bg-card__votes"><i class="fa-solid fa-heart"></i> <span class="bg-count">{./votes}</span></span> <span><i class="fa-regular fa-comment"></i> {./replies}</span></span>
 				</div>
 			</div>
