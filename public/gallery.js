@@ -13,6 +13,17 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		'פנטזיה', 'סוריאליסטי', 'מינימליסטי', 'פיקסל ארט', 'קומיקס', 'שחור־לבן',
 	];
 	const MAX_STYLES = 3;
+	// Usage permission of the picture (topic 333). The text goes into the post, the server keeps the key.
+	const USAGE = [
+		{ key: 'none', icon: 'fa-lock', label: 'לא מאשר', text: 'שימוש רק באישור היוצר', hint: 'שימוש רק באישור ממני' },
+		{ key: 'personal', icon: 'fa-user', label: 'שימוש אישי', text: 'מאשר שימוש אישי', hint: 'מותר להשתמש לצורך אישי' },
+		{ key: 'commercial', icon: 'fa-briefcase', label: 'אישי ומסחרי', text: 'מאשר שימוש אישי ומסחרי', hint: 'מותר להשתמש גם לצורך מסחרי' },
+	];
+	const USAGE_SHOWN = {
+		none: { icon: 'fa-lock', text: 'שימוש רק באישור היוצר' },
+		personal: { icon: 'fa-user-check', text: 'מותר לשימוש אישי' },
+		commercial: { icon: 'fa-circle-check', text: 'מותר לשימוש אישי ומסחרי' },
+	};
 	const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 	let lightbox = null;
@@ -23,7 +34,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		const root = $('.bina-gallery');
 
 		root.on('click', '.bg-share', function () {
-			openUpload(parseInt($(this).attr('data-cid'), 10), $(this).attr('data-will-queue') === 'true');
+			openUpload(parseInt($(this).attr('data-cid'), 10), $(this).attr('data-will-queue') === 'true', $(this).attr('data-last-usage') || '');
 		});
 
 		root.on('click', '.bg-open', function (e) {
@@ -140,7 +151,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 	// the prompt. It uploads the picture with the forum's regular upload and creates the topic with
 	// the regular API, so permissions, the post queue, rate limits and EXIF removal all apply as usual.
 	// The details are written into the post with fixed labels; the server reads them from there.
-	function openUpload(cid, willQueue) {
+	function openUpload(cid, willQueue, lastUsage) {
 		let file = null;
 		let previewUrl = null;
 		const maxKb = parseInt(config.maximumFileSize, 10) || 0;
@@ -158,21 +169,31 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 				</label>
 				<div class="mb-3">
 					<label class="form-label" for="bg-upload-title">כותרת <span class="text-secondary fw-normal">(לא חובה)</span></label>
-					<input type="text" class="form-control" id="bg-upload-title" name="title" maxlength="${parseInt(config.maximumTitleLength, 10) || 255}" dir="auto">
+					<input type="text" class="form-control" id="bg-upload-title" name="title" maxlength="${parseInt(config.maximumTitleLength, 10) || 255}">
 				</div>
 				<div class="mb-3">
 					<label class="form-label" for="bg-upload-tool">הכלי / המודל</label>
-					<input type="text" class="form-control" id="bg-upload-tool" name="tool" maxlength="200" list="bg-upload-tools" dir="auto" placeholder="למשל: Midjourney" autocomplete="off">
+					<input type="text" class="form-control" id="bg-upload-tool" name="tool" maxlength="200" list="bg-upload-tools" placeholder="למשל: Midjourney" autocomplete="off">
 					<datalist id="bg-upload-tools"></datalist>
 				</div>
 				<div class="mb-3">
 					<div class="form-label">סגנון <span class="text-secondary fw-normal">(עד ${MAX_STYLES}, לא חובה)</span></div>
 					<div class="bg-upload__styles"></div>
 				</div>
-				<div>
+				<div class="mb-3">
 					<label class="form-label" for="bg-upload-prompt">הפרומפט <span class="text-secondary fw-normal">(לא חובה)</span></label>
 					<textarea class="form-control" id="bg-upload-prompt" name="prompt" rows="4" maxlength="10000" dir="auto"></textarea>
 				</div>
+				<fieldset class="bg-upload__usage">
+					<legend class="form-label">אישור שימוש בתמונה</legend>
+					<div class="bg-upload__usage-options" role="radiogroup">
+						${USAGE.map(u => `
+							<label class="bg-upload__usage-option">
+								<input type="radio" name="usage" value="${u.key}" ${u.key === lastUsage ? 'checked' : ''}>
+								<span><i class="fa-solid ${u.icon}"></i> <b>${u.label}</b><small>${u.hint}</small></span>
+							</label>`).join('')}
+					</div>
+				</fieldset>
 				${willQueue ? '<p class="bg-upload__note"><i class="fa-solid fa-circle-info"></i> היצירה תופיע בגלריה אחרי אישור של צוות הפורום.</p>' : ''}
 			</form>
 		`);
@@ -275,6 +296,13 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 				setTimeout(() => drop.removeClass('is-missing'), 1500);
 				return alerts.error('בחרו תמונה כדי לשתף.');
 			}
+			const usage = form.find('[name="usage"]:checked').val();
+			if (!usage) {
+				const box = form.find('.bg-upload__usage').addClass('is-missing');
+				box[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
+				setTimeout(() => box.removeClass('is-missing'), 1500);
+				return alerts.error('בחרו אם אתם מאשרים לאחרים להשתמש בתמונה.');
+			}
 			busy = true;
 			const button = dialog.find('.bg-upload__submit');
 			const label = button.html();
@@ -289,6 +317,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 					tool: String(form.find('[name="tool"]').val() || '').trim(),
 					styles: styles.find('[aria-pressed="true"]').toArray().map(b => $(b).text()),
 					prompt: String(form.find('[name="prompt"]').val() || '').trim(),
+					usage: (USAGE.find(u => u.key === usage) || USAGE[0]).text,
 				});
 				const result = await api.post('/topics', { cid, title, content, tags: [] });
 				dialog.modal('hide');
@@ -330,8 +359,11 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		return image.url;
 	}
 
-	function buildContent({ url, alt, tool, styles, prompt }) {
+	function buildContent({ url, alt, tool, styles, prompt, usage }) {
 		const lines = [`![${alt.replace(/[[\]\n]/g, ' ')}](${url})`, ''];
+		if (usage) {
+			lines.push(`**אישור שימוש:** ${usage}`, '');
+		}
 		if (tool) {
 			lines.push(`**הכלי / המודל:** ${tool.replace(/\s*\n\s*/g, ' ')}`, '');
 		}
@@ -403,6 +435,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			'data-tool': decode(item.tool || ''),
 			'data-styles': decode(item.styles || ''),
 			'data-has-prompt': String(!!item.hasPrompt),
+			'data-usage': item.usage || '',
 		});
 		const img = $('<img loading="lazy" decoding="async">').attr({ src: item.thumb || item.image, alt: decode(item.title) });
 		if (item.w > 0 && item.h > 0) {
@@ -448,6 +481,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 								<a class="btn btn-sm btn-light bg-lb__topic"><i class="fa-regular fa-comment"></i> <span class="bg-lb__replies"></span> · לנושא המלא</a>
 							</div>
 						</div>
+						<div class="bg-lb__usage" hidden><i class="fa-solid"></i> <span></span></div>
 						<div class="bg-lb__prompt" hidden>
 							<button type="button" class="btn btn-sm btn-outline-light bg-lb__copy"><i class="fa-regular fa-copy"></i> העתקה</button>
 							<pre class="bg-lb__prompt-text" dir="auto"></pre>
@@ -510,6 +544,12 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 	// Tool and styles come with the card; the prompt (which can be long) is loaded when needed.
 	function renderDetails(card) {
 		const d = card[0].dataset;
+		const usage = USAGE_SHOWN[d.usage];
+		const usageEl = lightbox.find('.bg-lb__usage').prop('hidden', !usage).attr('data-usage', d.usage || '');
+		if (usage) {
+			usageEl.find('i').attr('class', `fa-solid ${usage.icon}`);
+			usageEl.find('span').text(usage.text);
+		}
 		lightbox.find('.bg-lb__tool').prop('hidden', !d.tool).find('span').text(d.tool || '');
 		const styles = lightbox.find('.bg-lb__styles').empty();
 		(d.styles ? d.styles.split(',') : []).map(st => st.trim()).filter(Boolean)

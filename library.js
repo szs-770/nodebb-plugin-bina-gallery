@@ -321,13 +321,37 @@ const LABELS = {
 	'סגנונות': 'styles',
 	'סגנון': 'styles',
 	'הפרומפט': 'prompt',
+	'אישור שימוש': 'usage',
+	'שימוש': 'usage',
 };
+
+// Usage permission the creator chose for the picture (topic 333). The post holds the Hebrew text;
+// the field holds the key. No choice (older creations) means nothing was said.
+const USAGE = {
+	none: 'שימוש רק באישור היוצר',
+	personal: 'מאשר שימוש אישי',
+	commercial: 'מאשר שימוש אישי ומסחרי',
+};
+
+function usageKey(text) {
+	const line = String(text || '').split('\n')[0];
+	if (/(^|[\s(])(לא|אסור)(?=$|[\s,.)])|רק באישור/.test(line)) {
+		return 'none';
+	}
+	if (/מסחרי/.test(line)) {
+		return 'commercial';
+	}
+	if (/אישי/.test(line)) {
+		return 'personal';
+	}
+	return '';
+}
 const LABEL_RE = new RegExp(`\\*\\*\\s*(${Object.keys(LABELS).map(l => l.replace(/[/]/g, '\\/')).join('|')})\\s*:?\\s*\\*\\*\\s*:?`, 'g');
 
 const FENCED_RE = /^[ \t]*\n?[ \t]*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n?[ \t]*\1[ \t]*(?:\n|$)/;
 
 function parseCreation(content) {
-	const out = { tool: '', styles: [], prompt: '' };
+	const out = { tool: '', styles: [], prompt: '', usage: '' };
 	if (typeof content !== 'string') {
 		return out;
 	}
@@ -361,6 +385,8 @@ function parseCreation(content) {
 				.filter(Boolean)
 				.join(' · ')
 				.slice(0, MAX_TOOL);
+		} else if (mark.key === 'usage') {
+			out.usage = usageKey(value);
 		} else if (mark.key === 'styles') {
 			out.styles = value.split('\n')[0].split(/[,،]/)
 				.map(st => st.trim().slice(0, MAX_STYLE))
@@ -389,6 +415,7 @@ async function syncFields(tid) {
 	(fields.tool ? (set.bgTool = fields.tool) : remove.push('bgTool'));
 	(fields.styles.length ? (set.bgStyles = JSON.stringify(fields.styles)) : remove.push('bgStyles'));
 	(fields.prompt ? (set.bgPrompt = fields.prompt) : remove.push('bgPrompt'));
+	(fields.usage ? (set.bgUsage = fields.usage) : remove.push('bgUsage'));
 	if (Object.keys(set).length) {
 		await db.setObject(`topic:${tid}`, set);
 	}
@@ -409,8 +436,14 @@ function parseStyles(json) {
 plugin.onTopicPost = async (hookData) => {
 	await plugin.onTopicChange(hookData);
 	try {
-		if (hookData.topic && hookData.topic.tid) {
-			await syncFields(hookData.topic.tid);
+		const { topic } = hookData;
+		if (topic && topic.tid) {
+			await syncFields(topic.tid);
+			// the creator's last choice is offered again in the next upload
+			const usage = await topics.getTopicField(topic.tid, 'bgUsage');
+			if (usage && USAGE[usage] && parseInt(topic.uid, 10) > 0) {
+				await user.setUserField(topic.uid, 'binaGalleryUsage', usage);
+			}
 		}
 	} catch (err) {
 		winston.error(`${LOG} ${err.stack}`);
@@ -828,6 +861,7 @@ function toItem(t, voteStatus, idx) {
 		tool: validator.escape(String(t.bgTool || '')),
 		styles: parseStyles(t.bgStyles).map(st => validator.escape(st)).join(', '),
 		hasPrompt: !!t.bgPrompt,
+		usage: USAGE[t.bgUsage] ? t.bgUsage : '',
 		timestampISO: t.timestampISO,
 		user: {
 			uid: t.user.uid,
@@ -890,6 +924,8 @@ async function renderGallery(req, res, next) {
 			category,
 			canPost,
 			willQueue: canPost && req.uid > 0 ? await needsApproval(req.uid, settings) : false,
+			lastUsage: canPost && req.uid > 0 && USAGE[await user.getUserField(req.uid, 'binaGalleryUsage')] ?
+				await user.getUserField(req.uid, 'binaGalleryUsage') : '',
 			loggedIn: req.uid > 0,
 		});
 	}
@@ -912,6 +948,7 @@ async function renderGallery(req, res, next) {
 	}
 
 	const willQueue = canPost && req.uid > 0 ? await needsApproval(req.uid, settings) : false;
+	const lastUsage = canPost && req.uid > 0 ? await user.getUserField(req.uid, 'binaGalleryUsage') : '';
 
 	res.render('gallery', {
 		title: 'גלריית יצירות',
@@ -931,6 +968,7 @@ async function renderGallery(req, res, next) {
 		category,
 		canPost,
 		willQueue,
+		lastUsage: USAGE[lastUsage] ? lastUsage : '',
 		moderation: settings.moderation,
 		loggedIn: req.uid > 0,
 	});

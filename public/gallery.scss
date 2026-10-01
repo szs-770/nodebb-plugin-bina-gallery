@@ -420,6 +420,16 @@ body.bg-lightbox-open { overflow: hidden; }
 		font-size: 0.75rem;
 	}
 
+	.bg-lb__usage {
+		margin-top: 0.35rem;
+		color: rgba(255, 255, 255, 0.75);
+		font-size: 0.8rem;
+
+		&[data-usage="commercial"] i,
+		&[data-usage="personal"] i { color: #7dd3a0; }
+		&[data-usage="none"] i { color: #f0b44c; }
+	}
+
 	.bg-lb__prompt-toggle.active {
 		background: rgba(255, 255, 255, 0.9);
 		color: #111;
@@ -533,6 +543,60 @@ body.bg-lightbox-open { overflow: hidden; }
 			border-color: #b86ad6;
 			background: #b86ad6;
 			color: #fff;
+		}
+	}
+
+	.bg-upload__usage {
+		margin: 0;
+		padding: 0.6rem;
+		border: 1px solid transparent;
+		border-radius: 0.75rem;
+		transition: border-color 0.15s ease;
+
+		legend { float: none; width: auto; margin-bottom: 0.5rem; font-size: 1rem; }
+		&.is-missing { border-color: var(--bs-danger); }
+	}
+
+	.bg-upload__usage-options {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 0.5rem;
+
+		@media (max-width: 575.98px) { grid-template-columns: 1fr; }
+	}
+
+	.bg-upload__usage-option {
+		position: relative;
+		margin: 0;
+		cursor: pointer;
+
+		input {
+			position: absolute;
+			opacity: 0;
+			pointer-events: none;
+		}
+
+		> span {
+			display: flex;
+			flex-direction: column;
+			gap: 0.15rem;
+			height: 100%;
+			padding: 0.55rem 0.75rem;
+			border: 1px solid var(--bs-border-color);
+			border-radius: 0.6rem;
+			transition: border-color 0.15s ease, background-color 0.15s ease;
+		}
+
+		i { color: #b86ad6; }
+		b { font-weight: 600; }
+		small { color: var(--bs-secondary-color); font-size: 0.78rem; }
+
+		&:hover > span { border-color: #b86ad6; }
+		input:focus-visible + span { outline: 2px solid #b86ad6; outline-offset: 2px; }
+
+		input:checked + span {
+			border-color: #b86ad6;
+			background: rgba(184, 106, 214, 0.12);
 		}
 	}
 
