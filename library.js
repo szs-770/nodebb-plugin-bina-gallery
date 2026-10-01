@@ -1069,6 +1069,13 @@ async function renderGallery(req, res, next) {
 	const willQueue = canPost && req.uid > 0 ? await needsApproval(req.uid, settings) : false;
 	const lastUsage = canPost && req.uid > 0 ? await user.getUserField(req.uid, 'binaGalleryUsage') : '';
 
+	// Sorts and filters are views of the same gallery: one canonical address for search engines
+	res.locals.linkTags = [{ rel: 'canonical', href: `${nconf.get('url')}/gallery${page > 1 && sort === 'new' && !hasFilters(filters) ? `?page=${page}` : ''}` }];
+	res.locals.metaTags = [
+		{ name: 'description', content: 'גלריית יצירות ה-AI של חברי פורום בינה טופ: תמונות, הכלים והפרומפטים שמאחוריהן.' },
+		{ property: 'og:description', content: 'גלריית יצירות ה-AI של חברי פורום בינה טופ: תמונות, הכלים והפרומפטים שמאחוריהן.' },
+	];
+
 	res.render('gallery', {
 		title: 'גלריית יצירות',
 		breadcrumbs: [{ text: 'גלריית יצירות' }],
@@ -1277,6 +1284,46 @@ async function redirectCreationTopic(req, res, next) {
 		return next();
 	}
 }
+
+/* ------------------------------------------------------------- sitemap */
+
+// Creations are listed in the sitemap by their gallery address (their /topic address redirects
+// there), together with the gallery itself.
+plugin.sitemapTopics = async (data) => {
+	try {
+		const { cid } = await getSettings();
+		if (cid && data.topics && data.topics.length) {
+			const cids = await topics.getTopicsFields(data.topics.map(t => t && t.tid), ['cid']);
+			data.topics = data.topics.filter((t, i) => !cids[i] || parseInt(cids[i].cid, 10) !== cid);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
+};
+
+plugin.sitemapPages = async (data) => {
+	try {
+		const settings = await getSettings();
+		if (!settings.cid) {
+			return data;
+		}
+		const list = await getGalleryItems(0, settings.cid, 'new'); // what guests can see
+		const rp = nconf.get('relative_path');
+		data.urls.push({ url: `${rp}/gallery`, changefreq: 'daily', priority: 0.6 });
+		list.forEach((t) => {
+			data.urls.push({
+				url: `${rp}/gallery/${t.tid}`,
+				lastmodISO: new Date(parseInt(t.lastposttime, 10) || parseInt(t.timestamp, 10) || Date.now()).toISOString(),
+				changefreq: 'weekly',
+				priority: 0.5,
+			});
+		});
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
+};
 
 /* ------------------------------------- forum profile lists without the gallery */
 

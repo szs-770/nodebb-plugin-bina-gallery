@@ -61,6 +61,14 @@
       "method": "onTopicMove"
     },
     {
+      "hook": "filter:sitemap.getTopics",
+      "method": "sitemapTopics"
+    },
+    {
+      "hook": "filter:sitemap.getPages",
+      "method": "sitemapPages"
+    },
+    {
       "hook": "filter:account.getPostsFromUserSet",
       "method": "filterAccountLists"
     },
