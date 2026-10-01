@@ -42,7 +42,7 @@
     },
     {
       "hook": "action:topic.delete",
-      "method": "onTopicChange"
+      "method": "onTopicRemoved"
     },
     {
       "hook": "action:topic.restore",
@@ -50,7 +50,7 @@
     },
     {
       "hook": "action:topic.purge",
-      "method": "onTopicChange"
+      "method": "onTopicRemoved"
     },
     {
       "hook": "action:topic.move",
@@ -59,6 +59,22 @@
     {
       "hook": "filter:helpers.getUserDataByUserSlug",
       "method": "addProfileData"
+    },
+    {
+      "hook": "filter:topics.updateRecent",
+      "method": "filterUpdateRecent"
+    },
+    {
+      "hook": "filter:topics.filterSortedTids",
+      "method": "filterSortedTids"
+    },
+    {
+      "hook": "filter:topics.getUnreadTids",
+      "method": "filterUnreadTids"
+    },
+    {
+      "hook": "filter:sockets.sendNewPostToUid",
+      "method": "onSendNewPostToUid"
     }
   ],
   "templates": "templates",
@@ -70,6 +86,7 @@
     "public/gallery.scss"
   ],
   "scripts": [
-    "public/profile.js"
+    "public/profile.js",
+    "public/forum-lists.js"
   ]
 }

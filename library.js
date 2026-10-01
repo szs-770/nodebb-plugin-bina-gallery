@@ -14,6 +14,10 @@
  * Creator score: likes on creations (the first post of a gallery topic) are kept out of the forum
  * reputation and counted in a separate "creator score" instead, shown on the gallery leaderboard
  * and on the user's profile. Likes on comments keep counting towards reputation as usual.
+ *
+ * Separate from the forum: creations are kept out of the forum's topic lists (recent, unread and
+ * its counter, popular/top, RSS, the home page cards and the parent category tile). They are
+ * still shown in the gallery, in the gallery category itself and in search.
  */
 
 const path = require('path');
@@ -44,6 +48,9 @@ const LEADERBOARD_SIZE = 50;
 const THUMB_DIR = 'bina-gallery';   // inside the uploads folder
 const GRID_WIDTH = 600;             // grid cards
 const FEATURED_WIDTH = 1400;        // "creation of the day" banner
+const THUMB_WIDTHS = [GRID_WIDTH, FEATURED_WIDTH];
+const THUMBS_SET = tid => `bina-gallery:thumbs:${tid}`;   // set: thumbnail file names made for a topic
+const THUMBS_INDEXED_KEY = 'bina-gallery:thumbs:indexed';
 
 const SORTS = [
 	{ key: 'new', label: 'חדשות' },
@@ -55,6 +62,8 @@ const SORTS = [
 ];
 
 const plugin = {};
+
+const _uniq = list => Array.from(new Set(list.map(String)));
 
 /* ------------------------------------------------------------ settings */
 
@@ -76,6 +85,9 @@ plugin.init = async ({ router }) => {
 	if (!await db.exists(SCORES_KEY) && !await db.exists(CREATIONS_KEY)) {
 		rebuildScores().catch(err => winston.error(`${LOG} ${err.stack}`));
 	}
+
+	removeGalleryFromRecent().catch(err => winston.error(`${LOG} ${err.stack}`));
+	indexExistingThumbs().catch(err => winston.error(`${LOG} ${err.stack}`));
 
 	routeHelpers.setupAdminPageRoute(router, '/admin/plugins/bina-gallery', async (req, res) => {
 		const settings = await getSettings();
@@ -216,15 +228,155 @@ plugin.onTopicChange = async ({ topic }) => {
 	}
 };
 
-plugin.onTopicMove = async ({ tid, fromCid, toCid }) => {
+// A deleted or purged creation must not stay reachable through its gallery thumbnails
+// (e.g. a picture removed for modesty reasons). Restoring it simply recreates them on the next view.
+plugin.onTopicRemoved = async (hookData) => {
+	await plugin.onTopicChange(hookData);
 	try {
 		const { cid } = await getSettings();
-		if (parseInt(fromCid, 10) === cid || parseInt(toCid, 10) === cid) {
-			await recountUser(await topics.getTopicField(tid, 'uid'));
+		const { topic } = hookData;
+		if (topic && topic.tid && parseInt(topic.cid, 10) === cid) {
+			await deleteThumbs(topic.tid);
 		}
 	} catch (err) {
 		winston.error(`${LOG} ${err.stack}`);
 	}
+};
+
+plugin.onTopicMove = async ({ tid, fromCid, toCid }) => {
+	try {
+		const { cid } = await getSettings();
+		fromCid = parseInt(fromCid, 10);
+		toCid = parseInt(toCid, 10);
+		if (!cid || fromCid === toCid || (fromCid !== cid && toCid !== cid)) {
+			return;
+		}
+		await recountUser(await topics.getTopicField(tid, 'uid'));
+		if (toCid === cid) {
+			// moved into the gallery: out of the forum lists
+			await db.sortedSetRemove('topics:recent', tid);
+		} else {
+			// moved out of the gallery: back into the forum lists (core only does this for /world moves)
+			await topics.updateRecent(tid, await topics.getTopicField(tid, 'lastposttime'));
+			await deleteThumbs(tid);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+};
+
+/* ------------------------------------------- out of the forum's topic lists */
+
+async function isGalleryTopic(tid) {
+	const { cid } = await getSettings();
+	return !!cid && parseInt(await topics.getTopicField(tid, 'cid'), 10) === cid;
+}
+
+async function getGalleryTidSet(tids) {
+	const { cid } = await getSettings();
+	if (!cid || !tids.length) {
+		return new Set();
+	}
+	const data = await topics.getTopicsFields(tids, ['tid', 'cid']);
+	return new Set(data.filter(t => t && parseInt(t.cid, 10) === cid).map(t => String(t.tid)));
+}
+
+function includesCid(list, cid) {
+	if (list === undefined || list === null || list === '') {
+		return false;
+	}
+	return (Array.isArray(list) ? list : [list]).map(String).includes(String(cid));
+}
+
+// topics:recent feeds /recent, the unread list of followed topics and the home page cards
+plugin.filterUpdateRecent = async (data) => {
+	try {
+		if (data && data.tid && await isGalleryTopic(data.tid)) {
+			return {};
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
+};
+
+async function removeGalleryFromRecent() {
+	const { cid } = await getSettings();
+	if (!cid) {
+		return;
+	}
+	const sets = [`cid:${cid}:tids`, `cid:${cid}:tids:pinned`, `cid:${cid}:tids:create`];
+	const tids = _uniq((await Promise.all(sets.map(set => db.getSortedSetRange(set, 0, -1)))).flat());
+	if (tids.length) {
+		await db.sortedSetRemove('topics:recent', tids);
+	}
+}
+
+// /recent, /popular, /top, their RSS feeds and the email digest.
+// Kept when the gallery category is selected explicitly, and on tag pages.
+plugin.filterSortedTids = async (data) => {
+	try {
+		const { cid } = await getSettings();
+		const params = data.params || {};
+		if (!cid || !data.tids || !data.tids.length ||
+			includesCid(params.cids, cid) || (params.tags && params.tags.length)) {
+			return data;
+		}
+		const gallery = await getGalleryTidSet(data.tids);
+		if (gallery.size) {
+			data.tids = data.tids.filter(tid => !gallery.has(String(tid)));
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
+};
+
+// /unread and the unread counters in the menu. Kept when the gallery category is selected.
+plugin.filterUnreadTids = async (data) => {
+	try {
+		const { cid } = await getSettings();
+		if (!cid || !data || !data.tidsByFilter || includesCid(data.cid, cid)) {
+			return data;
+		}
+		const all = _uniq(Object.values(data.tidsByFilter).flat());
+		const gallery = await getGalleryTidSet(all);
+		if (!gallery.size) {
+			return data;
+		}
+		Object.keys(data.tidsByFilter).forEach((filter) => {
+			data.tidsByFilter[filter] = data.tidsByFilter[filter].filter(tid => !gallery.has(String(tid)));
+			if (data.counts && Object.hasOwn(data.counts, filter)) {
+				data.counts[filter] = data.tidsByFilter[filter].length;
+			}
+		});
+		data.tids = data.tidsByFilter[data.filter || ''] ||
+			(data.tids || []).filter(tid => !gallery.has(String(tid)));
+		if (Array.isArray(data.unreadCids)) {
+			data.unreadCids = data.unreadCids.filter(c => String(c) !== String(cid));
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
+};
+
+// Live updates: a new creation or comment still reaches open pages (so an open creation shows new
+// comments right away), but must not bump the unread counters in the menu. The menu counter only
+// counts posts of followed topics or watched/tracked categories, so mark it as neither.
+// The "new topics" bar of topic lists is handled on the client (public/forum-lists.js).
+plugin.onSendNewPostToUid = async (data) => {
+	try {
+		const { cid } = await getSettings();
+		const post = data && data.post;
+		if (cid && post && post.topic && parseInt(post.topic.cid, 10) === cid) {
+			post.categoryWatchState = categories.watchStates.ignoring;
+			post.topic.isFollowing = false;
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
 };
 
 // Rebuild the creator scores and creation counts from the gallery category (admin button).
@@ -317,24 +469,38 @@ async function getGalleryItems(uid, cid, sort) {
 // Anything that is not a local upload, or animated GIFs, is shown as is.
 const pendingThumbs = new Map();
 
-async function getThumb(url, width) {
+// Where the thumbnail of an uploaded image is stored, or null when the image is not a local upload
+// (or is a GIF, which keeps its animation and is shown as is).
+function thumbInfo(url, width) {
 	const uploadUrl = `${nconf.get('relative_path')}${nconf.get('upload_url')}`;
 	if (typeof url !== 'string' || !url.startsWith(`${uploadUrl}/`) || /\.gif$/i.test(url)) {
-		return url;
+		return null;
 	}
 	const relative = decodeURIComponent(url.slice(uploadUrl.length + 1).split('?')[0]);
 	const uploadPath = nconf.get('upload_path');
 	const source = path.resolve(uploadPath, relative);
 	if (!source.startsWith(`${path.resolve(uploadPath)}${path.sep}`)) {
-		return url;
+		return null;
 	}
 	const name = `${crypto.createHash('sha1').update(relative).digest('hex').slice(0, 20)}-${width}.webp`;
-	const target = path.join(uploadPath, THUMB_DIR, name);
-	const thumbUrl = `${uploadUrl}/${THUMB_DIR}/${name}`;
+	return {
+		name,
+		source,
+		target: path.join(uploadPath, THUMB_DIR, name),
+		url: `${uploadUrl}/${THUMB_DIR}/${name}`,
+	};
+}
+
+async function getThumb(url, width, tid) {
+	const info = thumbInfo(url, width);
+	if (!info) {
+		return url;
+	}
+	const { source, target } = info;
 
 	try {
 		await fs.promises.access(target);
-		return thumbUrl;
+		return info.url;
 	} catch (e) { /* not created yet */ }
 
 	if (!pendingThumbs.has(target)) {
@@ -348,15 +514,75 @@ async function getThumb(url, width) {
 				.webp({ quality: 80 })
 				.toFile(tmp);
 			await fs.promises.rename(tmp, target);
+			if (tid) {
+				await db.setAdd(THUMBS_SET(tid), info.name);
+			}
 		})().finally(() => pendingThumbs.delete(target)));
 	}
 	try {
 		await pendingThumbs.get(target);
-		return thumbUrl;
+		return info.url;
 	} catch (err) {
 		winston.warn(`${LOG} could not create a thumbnail for ${url}: ${err.message}`);
 		return url;
 	}
+}
+
+// Thumbnail file names of a topic's current images (all sizes), whether they exist or not
+async function currentThumbNames(tid) {
+	const topicData = await topics.getTopicData(tid);
+	if (!topicData) {
+		return [];
+	}
+	const [thumbs] = await topics.thumbs.load([topicData]);
+	return (thumbs || []).flatMap(thumb => THUMB_WIDTHS.map(w => thumbInfo(thumb && thumb.url, w)))
+		.filter(Boolean)
+		.map(info => info.name);
+}
+
+async function deleteThumbs(tid) {
+	const names = _uniq([
+		...await db.getSetMembers(THUMBS_SET(tid)),
+		...await currentThumbNames(tid),
+	]);
+	const dir = path.join(nconf.get('upload_path'), THUMB_DIR);
+	await Promise.all(names.filter(name => /^[0-9a-f]{20}-\d+\.webp$/.test(name)).map(async (name) => {
+		try {
+			await fs.promises.unlink(path.join(dir, name));
+		} catch (err) {
+			if (err.code !== 'ENOENT') {
+				throw err;
+			}
+		}
+	}));
+	await db.delete(THUMBS_SET(tid));
+}
+
+// Thumbnails made before 1.3.0 were not recorded per topic. Record them once, so that a later
+// purge (when the topic data is already gone) can still remove them.
+async function indexExistingThumbs() {
+	const { cid } = await getSettings();
+	if (!cid || await db.exists(THUMBS_INDEXED_KEY)) {
+		return;
+	}
+	const dir = path.join(nconf.get('upload_path'), THUMB_DIR);
+	const tids = await db.getSortedSetRange(`cid:${cid}:tids:create`, 0, -1);
+	for (const tid of tids) {
+		/* eslint-disable no-await-in-loop */
+		const names = await currentThumbNames(tid);
+		const existing = [];
+		for (const name of names) {
+			try {
+				await fs.promises.access(path.join(dir, name));
+				existing.push(name);
+			} catch (e) { /* never made */ }
+		}
+		if (existing.length) {
+			await db.setAdd(THUMBS_SET(tid), existing);
+		}
+		/* eslint-enable no-await-in-loop */
+	}
+	await db.set(THUMBS_INDEXED_KEY, Date.now());
 }
 
 function toItem(t, voteStatus, idx) {
@@ -386,7 +612,7 @@ function toItem(t, voteStatus, idx) {
 async function toItems(list, uid, width = GRID_WIDTH) {
 	const [voteStatus, thumbs] = await Promise.all([
 		uid > 0 ? posts.getVoteStatusByPostIDs(list.map(t => t.mainPid), uid) : null,
-		Promise.all(list.map(t => getThumb(t.thumbs[0].url, width))),
+		Promise.all(list.map(t => getThumb(t.thumbs[0].url, width, t.tid))),
 	]);
 	return list.map((t, i) => ({ ...toItem(t, voteStatus, i), thumb: thumbs[i] }));
 }

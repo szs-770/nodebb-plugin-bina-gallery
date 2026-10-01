@@ -51,7 +51,8 @@
 		color: #fff;
 		text-decoration: none;
 
-		img {
+		// Only the creation itself; the author's avatar inside the info bar is an <img> too
+		> img {
 			display: block;
 			width: 100%;
 			max-height: 420px;
@@ -60,7 +61,7 @@
 			transition: transform 0.4s ease;
 		}
 
-		&:hover img { transform: scale(1.02); }
+		&:hover > img { transform: scale(1.02); }
 	}
 
 	.bg-featured__info {
@@ -129,7 +130,8 @@
 		color: #fff;
 		text-decoration: none;
 
-		img {
+		// Only the creation itself; the author's avatar in the overlay is an <img> too
+		> img {
 			display: block;
 			width: 100%;
 			height: auto;
@@ -151,7 +153,7 @@
 
 	.bg-card:hover,
 	.bg-card:focus-visible {
-		img { transform: scale(1.04); }
+		> img { transform: scale(1.04); }
 		.bg-card__overlay { opacity: 1; }
 	}
 
