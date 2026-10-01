@@ -37,6 +37,7 @@ const posts = nodebb.require('./src/posts');
 const categories = nodebb.require('./src/categories');
 const privileges = nodebb.require('./src/privileges');
 const routeHelpers = nodebb.require('./src/routes/helpers');
+const validator = nodebb.require('validator');
 
 const SETTINGS_KEY = 'bina-gallery';
 const LOG = '[plugins/bina-gallery]';
@@ -88,6 +89,12 @@ plugin.init = async ({ router }) => {
 
 	removeGalleryFromRecent().catch(err => winston.error(`${LOG} ${err.stack}`));
 	indexExistingThumbs().catch(err => winston.error(`${LOG} ${err.stack}`));
+	if (!await db.exists('bina-gallery:fields:synced')) {
+		syncAllFields()
+			.then(count => db.set('bina-gallery:fields:synced', Date.now())
+				.then(() => winston.info(`${LOG} creation details read from ${count} creations`)))
+			.catch(err => winston.error(`${LOG} ${err.stack}`));
+	}
 
 	routeHelpers.setupAdminPageRoute(router, '/admin/plugins/bina-gallery', async (req, res) => {
 		const settings = await getSettings();
@@ -104,11 +111,29 @@ plugin.init = async ({ router }) => {
 };
 
 plugin.addRoutes = async ({ router, middleware, helpers }) => {
+	// Details of one creation for the lightbox (the prompt can be long, so it is loaded on demand)
+	routeHelpers.setupApiRoute(router, 'get', '/bina-gallery/items/:tid', [], async (req, res) => {
+		const tid = parseInt(req.params.tid, 10);
+		const { cid } = await getSettings();
+		const topic = tid > 0 ? await topics.getTopicFields(tid, ['tid', 'cid', 'deleted', 'bgTool', 'bgStyles', 'bgPrompt']) : null;
+		if (!topic || !topic.tid || parseInt(topic.cid, 10) !== cid || topic.deleted ||
+			!await privileges.topics.can('topics:read', tid, req.uid)) {
+			return helpers.formatApiResponse(404, res);
+		}
+		helpers.formatApiResponse(200, res, {
+			tid,
+			tool: topic.bgTool || '',
+			styles: parseStyles(topic.bgStyles),
+			prompt: topic.bgPrompt || '',
+		});
+	});
+
 	routeHelpers.setupApiRoute(router, 'post', '/bina-gallery/rebuild', [middleware.ensureLoggedIn], async (req, res) => {
 		if (!await user.isAdministrator(req.uid)) {
 			return helpers.formatApiResponse(403, res, new Error('[[error:no-privileges]]'));
 		}
-		helpers.formatApiResponse(200, res, await rebuildScores());
+		const scores = await rebuildScores();
+		helpers.formatApiResponse(200, res, { ...scores, creations: await syncAllFields() });
 	});
 };
 
@@ -132,6 +157,17 @@ plugin.appendConfig = async (config) => {
 // New creations (new topics in the gallery category) go to the post queue when moderation is on,
 // unless the author is an admin/moderator or a member of the approved creators group.
 // Comments on creations are not affected.
+async function needsApproval(uid, settings) {
+	if (!settings.moderation) {
+		return false;
+	}
+	const [isPrivileged, isApproved] = await Promise.all([
+		user.isPrivileged(uid),
+		settings.approvedGroup ? groups.isMember(uid, settings.approvedGroup) : false,
+	]);
+	return !isPrivileged && !isApproved;
+}
+
 plugin.shouldQueue = async (payload) => {
 	try {
 		const { uid, data } = payload;
@@ -139,14 +175,10 @@ plugin.shouldQueue = async (payload) => {
 			return payload;
 		}
 		const settings = await getSettings();
-		if (!settings.moderation || !settings.cid || parseInt(data.cid, 10) !== settings.cid) {
+		if (!settings.cid || parseInt(data.cid, 10) !== settings.cid) {
 			return payload;
 		}
-		const [isPrivileged, isApproved] = await Promise.all([
-			user.isPrivileged(uid),
-			settings.approvedGroup ? groups.isMember(uid, settings.approvedGroup) : false,
-		]);
-		if (!isPrivileged && !isApproved) {
+		if (await needsApproval(uid, settings)) {
 			payload.shouldQueue = true;
 		}
 	} catch (err) {
@@ -255,6 +287,7 @@ plugin.onTopicMove = async ({ tid, fromCid, toCid }) => {
 		if (toCid === cid) {
 			// moved into the gallery: out of the forum lists
 			await db.sortedSetRemove('topics:recent', tid);
+			await syncFields(tid);
 		} else {
 			// moved out of the gallery: back into the forum lists (core only does this for /world moves)
 			await topics.updateRecent(tid, await topics.getTopicField(tid, 'lastposttime'));
@@ -264,6 +297,152 @@ plugin.onTopicMove = async ({ tid, fromCid, toCid }) => {
 		winston.error(`${LOG} ${err.stack}`);
 	}
 };
+
+/* ------------------------------------------------- creation details */
+
+// The tool, styles and prompt of a creation are written in its first post with fixed labels
+// (the gallery's upload window writes them, and the old composer template used the same labels):
+//   **הכלי / המודל:** Midjourney
+//   **סגנונות:** צבעי מים, פנטזיה
+//   **הפרומפט:**
+//   ```
+//   a fox in the snow ...
+//   ```
+// They are copied into topic fields (bgTool, bgStyles, bgPrompt) whenever the creation is posted
+// (also after approval from the post queue), edited or moved into the gallery, so the gallery can
+// show and later filter by them. The post itself stays the single source of truth.
+const MAX_TOOL = 200;
+const MAX_STYLE = 40;
+const MAX_STYLES = 5;
+const MAX_PROMPT = 10000;
+const LABELS = {
+	'הכלי / המודל': 'tool',
+	'הכלי': 'tool',
+	'סגנונות': 'styles',
+	'סגנון': 'styles',
+	'הפרומפט': 'prompt',
+};
+const LABEL_RE = new RegExp(`\\*\\*\\s*(${Object.keys(LABELS).map(l => l.replace(/[/]/g, '\\/')).join('|')})\\s*:?\\s*\\*\\*\\s*:?`, 'g');
+
+const FENCED_RE = /^[ \t]*\n?[ \t]*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n?[ \t]*\1[ \t]*(?:\n|$)/;
+
+function parseCreation(content) {
+	const out = { tool: '', styles: [], prompt: '' };
+	if (typeof content !== 'string') {
+		return out;
+	}
+	const marks = [];
+	let m;
+	LABEL_RE.lastIndex = 0;
+	while ((m = LABEL_RE.exec(content))) {
+		marks.push({ key: LABELS[m[1]], start: m.index, end: LABEL_RE.lastIndex });
+	}
+	let skipUntil = -1;
+	marks.forEach((mark, i) => {
+		if (mark.start < skipUntil) {
+			return; // a label written inside a fenced prompt is part of the prompt
+		}
+		let value;
+		const fenced = mark.key === 'prompt' ? FENCED_RE.exec(content.slice(mark.end)) : null;
+		if (fenced) {
+			value = fenced[2];
+			skipUntil = mark.end + fenced[0].length;
+		} else {
+			const next = marks.slice(i + 1).find(n => n.start >= skipUntil);
+			value = content.slice(mark.end, next ? next.start : content.length);
+		}
+		value = value.trim();
+		if (!value || (out[mark.key] && out[mark.key].length)) {
+			return; // first non-empty value of each label wins
+		}
+		if (mark.key === 'tool') {
+			out.tool = value.split('\n')
+				.map(line => line.trim().replace(/\s*:$/, ''))
+				.filter(Boolean)
+				.join(' · ')
+				.slice(0, MAX_TOOL);
+		} else if (mark.key === 'styles') {
+			out.styles = value.split('\n')[0].split(/[,،]/)
+				.map(st => st.trim().slice(0, MAX_STYLE))
+				.filter(Boolean)
+				.slice(0, MAX_STYLES);
+		} else {
+			let prompt = value;
+			if (/^"[\s\S]*"$/.test(prompt) && !prompt.slice(1, -1).includes('"')) {
+				prompt = prompt.slice(1, -1).trim();
+			}
+			out.prompt = prompt.slice(0, MAX_PROMPT);
+		}
+	});
+	return out;
+}
+
+async function syncFields(tid) {
+	const { cid } = await getSettings();
+	const topic = await topics.getTopicFields(tid, ['cid', 'mainPid']);
+	if (!cid || !topic || parseInt(topic.cid, 10) !== cid || !topic.mainPid) {
+		return;
+	}
+	const fields = parseCreation(await posts.getPostField(topic.mainPid, 'content'));
+	const set = {};
+	const remove = [];
+	(fields.tool ? (set.bgTool = fields.tool) : remove.push('bgTool'));
+	(fields.styles.length ? (set.bgStyles = JSON.stringify(fields.styles)) : remove.push('bgStyles'));
+	(fields.prompt ? (set.bgPrompt = fields.prompt) : remove.push('bgPrompt'));
+	if (Object.keys(set).length) {
+		await db.setObject(`topic:${tid}`, set);
+	}
+	if (remove.length) {
+		await db.deleteObjectFields(`topic:${tid}`, remove);
+	}
+}
+
+function parseStyles(json) {
+	try {
+		const list = JSON.parse(json || '[]');
+		return Array.isArray(list) ? list.map(String) : [];
+	} catch (e) {
+		return [];
+	}
+}
+
+plugin.onTopicPost = async (hookData) => {
+	await plugin.onTopicChange(hookData);
+	try {
+		if (hookData.topic && hookData.topic.tid) {
+			await syncFields(hookData.topic.tid);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+};
+
+plugin.onPostEdit = async ({ post }) => {
+	try {
+		if (!post || !post.tid || !post.pid) {
+			return;
+		}
+		const mainPid = await topics.getTopicField(post.tid, 'mainPid');
+		if (String(mainPid) === String(post.pid)) {
+			await syncFields(post.tid);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+};
+
+// One-time (and admin button): fill the fields of creations posted before 1.5.0
+async function syncAllFields() {
+	const { cid } = await getSettings();
+	if (!cid) {
+		return 0;
+	}
+	const tids = await db.getSortedSetRange(`cid:${cid}:tids:create`, 0, -1);
+	for (const tid of tids) {
+		await syncFields(tid); // eslint-disable-line no-await-in-loop
+	}
+	return tids.length;
+}
 
 /* ------------------------------------------- out of the forum's topic lists */
 
@@ -645,6 +824,10 @@ function toItem(t, voteStatus, idx) {
 		votes: parseInt(t.votes, 10) || 0,
 		replies: Math.max((parseInt(t.postcount, 10) || 1) - 1, 0),
 		upvoted: !!(voteStatus && voteStatus.upvotes[idx]),
+		// escaped like the title: templates print values as they are
+		tool: validator.escape(String(t.bgTool || '')),
+		styles: parseStyles(t.bgStyles).map(st => validator.escape(st)).join(', '),
+		hasPrompt: !!t.bgPrompt,
 		timestampISO: t.timestampISO,
 		user: {
 			uid: t.user.uid,
@@ -706,6 +889,7 @@ async function renderGallery(req, res, next) {
 			cid: settings.cid,
 			category,
 			canPost,
+			willQueue: canPost && req.uid > 0 ? await needsApproval(req.uid, settings) : false,
 			loggedIn: req.uid > 0,
 		});
 	}
@@ -727,6 +911,8 @@ async function renderGallery(req, res, next) {
 		}
 	}
 
+	const willQueue = canPost && req.uid > 0 ? await needsApproval(req.uid, settings) : false;
+
 	res.render('gallery', {
 		title: 'גלריית יצירות',
 		breadcrumbs: [{ text: 'גלריית יצירות' }],
@@ -744,6 +930,7 @@ async function renderGallery(req, res, next) {
 		cid: settings.cid,
 		category,
 		canPost,
+		willQueue,
 		moderation: settings.moderation,
 		loggedIn: req.uid > 0,
 	});

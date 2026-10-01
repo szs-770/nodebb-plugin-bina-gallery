@@ -6,7 +6,7 @@
 		</div>
 		<div class="bg-hero__actions">
 			{{{ if canPost }}}
-			<button type="button" class="btn btn-primary bg-share" data-cid="{cid}"><i class="fa-solid fa-plus"></i> שתפו יצירה</button>
+			<button type="button" class="btn btn-primary bg-share" data-cid="{cid}" data-will-queue="{willQueue}"><i class="fa-solid fa-plus"></i> שתפו יצירה</button>
 			{{{ else }}}
 			{{{ if !loggedIn }}}
 			<a class="btn btn-primary" href="{config.relative_path}/login"><i class="fa-solid fa-right-to-bracket"></i> התחברו כדי לשתף</a>
@@ -17,7 +17,7 @@
 	</div>
 
 	{{{ if hasFeatured }}}
-	<a class="bg-featured bg-open" href="{config.relative_path}/topic/{featured.slug}" data-tid="{featured.tid}" data-pid="{featured.pid}" data-image="{featured.image}" data-title="{featured.title}" data-votes="{featured.votes}" data-upvoted="{featured.upvoted}" data-replies="{featured.replies}" data-author="{featured.user.displayname}" data-userslug="{featured.user.userslug}">
+	<a class="bg-featured bg-open" href="{config.relative_path}/topic/{featured.slug}" data-tid="{featured.tid}" data-pid="{featured.pid}" data-image="{featured.image}" data-title="{featured.title}" data-votes="{featured.votes}" data-upvoted="{featured.upvoted}" data-replies="{featured.replies}" data-author="{featured.user.displayname}" data-userslug="{featured.user.userslug}" data-tool="{featured.tool}" data-styles="{featured.styles}" data-has-prompt="{featured.hasPrompt}">
 		<img src="{featured.thumb}" alt="{featured.title}" {{{ if featured.w }}}width="{featured.w}" height="{featured.h}" {{{ end }}}>
 		<div class="bg-featured__info">
 			<span class="bg-featured__badge"><i class="fa-solid fa-crown"></i> יצירת היום</span>
@@ -65,7 +65,7 @@
 
 	<div class="bg-grid">
 		{{{ each items }}}
-		<a class="bg-card bg-open" href="{config.relative_path}/topic/{./slug}" data-index="{./index}" data-tid="{./tid}" data-pid="{./pid}" data-image="{./image}" data-title="{./title}" data-votes="{./votes}" data-upvoted="{./upvoted}" data-replies="{./replies}" data-author="{./user.displayname}" data-userslug="{./user.userslug}">
+		<a class="bg-card bg-open" href="{config.relative_path}/topic/{./slug}" data-index="{./index}" data-tid="{./tid}" data-pid="{./pid}" data-image="{./image}" data-title="{./title}" data-votes="{./votes}" data-upvoted="{./upvoted}" data-replies="{./replies}" data-author="{./user.displayname}" data-userslug="{./user.userslug}" data-tool="{./tool}" data-styles="{./styles}" data-has-prompt="{./hasPrompt}">
 			<img src="{./thumb}" alt="{./title}" {{{ if ./w }}}width="{./w}" height="{./h}" {{{ end }}}loading="lazy" decoding="async">
 			<div class="bg-card__overlay">
 				<div class="bg-card__title">{./title}</div>

@@ -16,7 +16,7 @@ export function init() {
 	$('#bina-gallery-rebuild').on('click', async () => {
 		try {
 			const res = await post('/plugins/bina-gallery/rebuild', {});
-			success(`הניקוד חושב מחדש (${res.creators} יוצרים).`);
+			success(`הניקוד חושב מחדש (${res.creators} יוצרים), ופרטי היצירות נקראו מחדש (${res.creations} יצירות).`);
 		} catch (e) {
 			error(e.message || e);
 		}

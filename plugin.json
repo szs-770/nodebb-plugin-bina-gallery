@@ -38,7 +38,11 @@
     },
     {
       "hook": "action:topic.post",
-      "method": "onTopicChange"
+      "method": "onTopicPost"
+    },
+    {
+      "hook": "action:post.edit",
+      "method": "onPostEdit"
     },
     {
       "hook": "action:topic.delete",
