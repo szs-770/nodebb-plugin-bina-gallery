@@ -388,10 +388,14 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 	async function loadMore() {
 		const btn = $(this);
 		const next = parseInt(btn.attr('data-next'), 10);
-		const sort = $('.bina-gallery').attr('data-sort');
+		const root = btn.closest('.bina-gallery');
+		// the gallery itself, or another list of creations (the profile tab) that names its own API
+		const url = root.attr('data-api') ?
+			`${config.relative_path}${root.attr('data-api')}?page=${next}` :
+			`${config.relative_path}/api/gallery?sort=${encodeURIComponent(root.attr('data-sort') || 'new')}&page=${next}`;
 		btn.prop('disabled', true);
 		try {
-			const res = await fetch(`${config.relative_path}/api/gallery?sort=${encodeURIComponent(sort)}&page=${next}`, {
+			const res = await fetch(url, {
 				credentials: 'same-origin',
 			});
 			const data = await res.json();
@@ -399,7 +403,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			if (masonry.grid) {
 				masonry.add(cards);
 			} else {
-				$('.bina-gallery .bg-grid').append(cards);
+				root.find('.bg-grid').append(cards);
 			}
 			if (data.hasMore) {
 				btn.attr('data-next', data.nextPage).prop('disabled', false);
@@ -421,7 +425,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 	function buildCard(item) {
 		const a = $('<a class="bg-card bg-open"></a>');
 		a.attr({
-			href: `${config.relative_path}/topic/${item.slug}`,
+			href: `${config.relative_path}/gallery/${item.tid}`,
 			'data-index': item.index,
 			'data-tid': item.tid,
 			'data-pid': item.pid,
@@ -478,7 +482,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 							<div class="bg-lb__actions">
 								<button type="button" class="btn btn-sm btn-outline-light bg-lb__prompt-toggle" aria-expanded="false" hidden><i class="fa-solid fa-terminal"></i> פרומפט</button>
 								<button type="button" class="btn btn-sm bg-lb__like"><i class="fa-heart"></i> <span class="bg-lb__count"></span></button>
-								<a class="btn btn-sm btn-light bg-lb__topic"><i class="fa-regular fa-comment"></i> <span class="bg-lb__replies"></span> · לנושא המלא</a>
+								<a class="btn btn-sm btn-light bg-lb__topic"><i class="fa-regular fa-comment"></i> <span class="bg-lb__replies"></span> · לעמוד היצירה</a>
 							</div>
 						</div>
 						<div class="bg-lb__usage" hidden><i class="fa-solid"></i> <span></span></div>

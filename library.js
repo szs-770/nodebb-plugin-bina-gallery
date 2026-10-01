@@ -37,6 +37,7 @@ const posts = nodebb.require('./src/posts');
 const categories = nodebb.require('./src/categories');
 const privileges = nodebb.require('./src/privileges');
 const routeHelpers = nodebb.require('./src/routes/helpers');
+const helpers = nodebb.require('./src/controllers/helpers');
 const validator = nodebb.require('validator');
 
 const SETTINGS_KEY = 'bina-gallery';
@@ -79,8 +80,15 @@ async function getSettings() {
 
 /* --------------------------------------------------------------- setup */
 
-plugin.init = async ({ router }) => {
+plugin.init = async ({ router, middleware }) => {
 	routeHelpers.setupPageRoute(router, '/gallery', renderGallery);
+	routeHelpers.setupPageRoute(router, '/gallery/:tid', renderCreation);
+	// "Gallery" tab in user profiles, with the same middlewares core uses for the other profile pages
+	routeHelpers.setupPageRoute(router, '/user/:userslug/gallery', [
+		middleware.exposeUid,
+		middleware.canViewUsers,
+		middleware.buildAccountData,
+	], renderProfileGallery);
 
 	// First run: build the creator scores from whatever is already in the gallery
 	if (!await db.exists(SCORES_KEY) && !await db.exists(CREATIONS_KEY)) {
@@ -971,6 +979,201 @@ async function renderGallery(req, res, next) {
 		lastUsage: USAGE[lastUsage] ? lastUsage : '',
 		moderation: settings.moderation,
 		loggedIn: req.uid > 0,
+	});
+}
+
+/* -------------------------------------------------------- creation page */
+
+const COMMENTS_MAX = 200;
+const MORE_FROM_CREATOR = 6;
+
+function absoluteUrl(url) {
+	return /^https?:\/\//.test(url) ? url : `${nconf.get('url')}${url.startsWith(nconf.get('relative_path')) ? url.slice(nconf.get('relative_path').length) : url}`;
+}
+
+function textExcerpt(text, max) {
+	const plain = String(text || '').replace(/\s+/g, ' ').trim();
+	return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
+}
+
+// Comments: every post of the creation's topic except the first one, oldest first
+async function getComments(tid, uid) {
+	const pids = await db.getSortedSetRange(`tid:${tid}:posts`, 0, COMMENTS_MAX - 1);
+	if (!pids.length) {
+		return [];
+	}
+	const list = await posts.getPostSummaryByPids(pids, uid, { stripTags: false });
+	return list.filter(p => p && !p.deleted).map(p => ({
+		pid: p.pid,
+		content: p.content,
+		timestampISO: p.timestampISO,
+		user: {
+			uid: p.user.uid,
+			username: p.user.username,
+			displayname: p.user.displayname,
+			userslug: p.user.userslug,
+			picture: p.user.picture,
+			'icon:text': p.user['icon:text'],
+			'icon:bgColor': p.user['icon:bgColor'],
+		},
+	}));
+}
+
+async function renderCreation(req, res, next) {
+	const tid = parseInt(req.params.tid, 10);
+	const settings = await getSettings();
+	if (!(tid > 0) || !settings.cid) {
+		return next();
+	}
+	const [topic] = await topics.getTopicsByTids([tid], req.uid);
+	if (!topic || parseInt(topic.cid, 10) !== settings.cid) {
+		return next();
+	}
+	const [canRead, isPrivileged] = await Promise.all([
+		privileges.topics.can('topics:read', tid, req.uid),
+		user.isPrivileged(req.uid),
+	]);
+	if (!canRead) {
+		return next(); // same answer as a missing page
+	}
+	if ((topic.deleted && !isPrivileged) || !topic.thumbs || !topic.thumbs.length) {
+		// a creation without a picture (or a deleted one) is still a forum topic
+		return helpers.redirect(res, `/topic/${topic.slug}`);
+	}
+
+	const authorUid = parseInt(topic.uid, 10);
+	const [
+		[item], comments, canReply, editState, isFollowing, score, creations, list, otherTids,
+	] = await Promise.all([
+		toItems([topic], req.uid, FEATURED_WIDTH),
+		getComments(tid, req.uid),
+		privileges.topics.can('topics:reply', tid, req.uid),
+		req.uid > 0 ? privileges.posts.canEdit(topic.mainPid, req.uid) : { flag: false },
+		req.uid > 0 && req.uid !== authorUid ? user.isFollowing(req.uid, authorUid) : false,
+		db.sortedSetScore(SCORES_KEY, authorUid),
+		db.sortedSetScore(CREATIONS_KEY, authorUid),
+		getGalleryItems(req.uid, settings.cid, 'new'),
+		db.getSortedSetRevRange(`cid:${settings.cid}:uid:${authorUid}:tids`, 0, 30),
+	]);
+
+	// Newer / older creation, in the order of the gallery
+	const position = list.findIndex(t => String(t.tid) === String(tid));
+	const newer = position > 0 ? list[position - 1] : null;
+	const older = position >= 0 && position < list.length - 1 ? list[position + 1] : null;
+
+	// More from the same creator
+	const others = (await topics.getTopicsByTids(otherTids.filter(t => String(t) !== String(tid)), req.uid))
+		.filter(t => t && !t.deleted && !t.pinned && t.thumbs && t.thumbs.length)
+		.slice(0, MORE_FROM_CREATOR);
+	const moreItems = await toItems(others, req.uid);
+
+	const prompt = topic.bgPrompt || '';
+	const usage = USAGE[topic.bgUsage] ? topic.bgUsage : '';
+	const description = prompt ?
+		textExcerpt(prompt, 200) :
+		`יצירה של ${validator.unescape(String(item.user.displayname || ''))} בגלריית היצירות של בינה טופ`;
+
+	res.locals.metaTags = [
+		{ name: 'description', content: validator.escape(description) },
+		{ property: 'og:title', content: topic.title },
+		{ property: 'og:description', content: validator.escape(description) },
+		{ property: 'og:type', content: 'article' },
+		{ property: 'og:image', content: absoluteUrl(item.thumb) },
+		{ property: 'og:image:url', content: absoluteUrl(item.thumb) },
+	];
+	if (item.w && item.h) {
+		res.locals.metaTags.push(
+			{ property: 'og:image:width', content: String(item.w) },
+			{ property: 'og:image:height', content: String(item.h) },
+		);
+	}
+	res.locals.linkTags = [{ rel: 'canonical', href: `${nconf.get('url')}/gallery/${tid}` }];
+
+	res.render('gallery-item', {
+		title: topic.title,
+		breadcrumbs: [{ text: 'גלריית יצירות', url: '/gallery' }, { text: topic.title }],
+		item,
+		image: item.image,
+		tid,
+		pid: topic.mainPid,
+		slug: topic.slug,
+		deleted: !!topic.deleted,
+		timestampISO: topic.timestampISO,
+		tool: validator.escape(String(topic.bgTool || '')),
+		styles: parseStyles(topic.bgStyles).map(name => ({ name: validator.escape(name) })),
+		hasStyles: parseStyles(topic.bgStyles).length > 0,
+		prompt, // printed with text() on the client only
+		hasPrompt: !!prompt,
+		usage,
+		usageText: usage ? { none: 'שימוש רק באישור היוצר', personal: 'מותר לשימוש אישי', commercial: 'מותר לשימוש אישי ומסחרי' }[usage] : '',
+		usageIcon: usage ? { none: 'fa-lock', personal: 'fa-user-check', commercial: 'fa-circle-check' }[usage] : '',
+		author: item.user,
+		authorScore: parseInt(score, 10) || 0,
+		authorCreations: parseInt(creations, 10) || 0,
+		isFollowing: !!isFollowing,
+		canFollow: req.uid > 0 && req.uid !== authorUid,
+		isOwn: req.uid > 0 && req.uid === authorUid,
+		canEdit: !!(editState && editState.flag),
+		canReply,
+		loggedIn: req.uid > 0,
+		comments,
+		commentCount: comments.length,
+		newer: newer ? { tid: newer.tid, title: newer.title } : null,
+		older: older ? { tid: older.tid, title: older.title } : null,
+		position: position >= 0 ? position + 1 : 0,
+		total: list.length,
+		more: moreItems,
+		hasMore: moreItems.length > 0,
+		cid: settings.cid,
+	});
+}
+
+/* ----------------------------------------------------- profile gallery tab */
+
+plugin.addProfileMenu = async (data) => {
+	data.links.push({
+		id: 'bina-gallery',
+		route: 'gallery',
+		icon: 'fa-images',
+		name: 'יצירות בגלריה',
+		visibility: {
+			self: true,
+			other: true,
+			moderator: true,
+			globalMod: true,
+			admin: true,
+		},
+	});
+	return data;
+};
+
+async function renderProfileGallery(req, res, next) {
+	const settings = await getSettings();
+	const userData = res.locals.userData;
+	if (!settings.cid || !userData) {
+		return next();
+	}
+	const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+	const allTids = await db.getSortedSetRevRange(`cid:${settings.cid}:uid:${userData.uid}:tids`, 0, MAX_SCAN - 1);
+	const tids = await privileges.topics.filterTids('topics:read', allTids, req.uid);
+	const list = (await topics.getTopicsByTids(tids, req.uid))
+		.filter(t => t && !t.deleted && !t.pinned && t.thumbs && t.thumbs.length);
+	const start = (page - 1) * PAGE_SIZE;
+	const items = await toItems(list.slice(start, start + PAGE_SIZE), req.uid, GRID_WIDTH, start);
+	const hearts = list.reduce((sum, t) => sum + Math.max(parseInt(t.votes, 10) || 0, 0), 0);
+
+	res.render('account/gallery', {
+		...userData,
+		title: `יצירות בגלריה | ${userData.displayname}`,
+		breadcrumbs: [{ text: userData.displayname, url: `/user/${userData.userslug}` }, { text: 'יצירות בגלריה' }],
+		items,
+		empty: !items.length,
+		creationCount: list.length,
+		hearts,
+		hasMore: start + PAGE_SIZE < list.length,
+		nextPage: page + 1,
+		cid: settings.cid,
+		canPost: userData.isSelf && await privileges.categories.can('topics:create', settings.cid, req.uid),
 	});
 }
 
