@@ -32,13 +32,105 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'hooks'], function (api, al
 			// ajaxify handles every link click on the page, so stop the event here
 			e.preventDefault();
 			e.stopPropagation();
-			const cards = root.find('.bg-open');
+			const cards = orderedCards(root);
 			openLightbox(cards, cards.index(this));
 		});
 
 		root.on('click', '.bg-load-more', loadMore);
 
-		$(window).one('action:ajaxify.start', closeLightbox);
+		masonry.init(root.find('.bg-grid'));
+
+		$(window).one('action:ajaxify.start', () => {
+			closeLightbox();
+			masonry.destroy();
+		});
+	};
+
+	// Cards in their real order (the order of the list), not the order of the columns:
+	// "creation of the day" first, then the grid by data-index. Used by the lightbox and its keys.
+	function orderedCards(root) {
+		const grid = root.find('.bg-grid .bg-card').toArray()
+			.sort((a, b) => (parseInt(a.dataset.index, 10) || 0) - (parseInt(b.dataset.index, 10) || 0));
+		return $(root.find('.bg-featured').toArray().concat(grid));
+	}
+
+	/* -------------------------------------------------------- masonry */
+
+	// Each card goes, in order, into the column that is currently the shortest (ties: the first
+	// column, which is the rightmost in RTL). So the newest creations always fill the top row.
+	// Card heights are known before the images load, from the width/height attributes the server adds.
+	// The layout is rebuilt only when the number of columns changes; "load more" only adds cards.
+	const masonry = {
+		grid: null,
+		cols: [],
+		count: 0,
+		onResize: null,
+
+		init(grid) {
+			this.destroy();
+			if (!grid.length) {
+				return;
+			}
+			this.grid = grid;
+			this.layout();
+			let frame = 0;
+			this.onResize = () => {
+				cancelAnimationFrame(frame);
+				frame = requestAnimationFrame(() => {
+					if (this.grid && this.columnCount() !== this.count) {
+						this.layout();
+					}
+				});
+			};
+			window.addEventListener('resize', this.onResize);
+		},
+
+		destroy() {
+			if (this.onResize) {
+				window.removeEventListener('resize', this.onResize);
+			}
+			this.grid = null;
+			this.cols = [];
+			this.count = 0;
+			this.onResize = null;
+		},
+
+		columnCount() {
+			const n = parseInt(getComputedStyle(this.grid[0]).getPropertyValue('--bg-cols'), 10);
+			return n > 0 ? n : 1;
+		},
+
+		layout() {
+			const grid = this.grid;
+			const cards = grid.find('.bg-card').toArray()
+				.sort((a, b) => (parseInt(a.dataset.index, 10) || 0) - (parseInt(b.dataset.index, 10) || 0));
+			this.count = this.columnCount();
+			grid.find('.bg-col').remove();
+			this.cols = [];
+			for (let i = 0; i < this.count; i += 1) {
+				this.cols.push($('<div class="bg-col"></div>').appendTo(grid)[0]);
+			}
+			grid.addClass('bg-grid--masonry');
+			this.add(cards);
+		},
+
+		add(cards) {
+			if (!this.grid) {
+				return;
+			}
+			cards.forEach((card) => {
+				let target = this.cols[0];
+				let min = Infinity;
+				this.cols.forEach((col) => {
+					const height = col.getBoundingClientRect().height;
+					if (height < min - 0.5) {
+						min = height;
+						target = col;
+					}
+				});
+				target.appendChild(card);
+			});
+		},
 	};
 
 	/* ------------------------------------------------------ load more */
@@ -53,8 +145,12 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'hooks'], function (api, al
 				credentials: 'same-origin',
 			});
 			const data = await res.json();
-			const grid = $('.bina-gallery .bg-grid');
-			data.items.forEach(item => grid.append(buildCard(item)));
+			const cards = data.items.map(item => buildCard(item)[0]);
+			if (masonry.grid) {
+				masonry.add(cards);
+			} else {
+				$('.bina-gallery .bg-grid').append(cards);
+			}
 			if (data.hasMore) {
 				btn.attr('data-next', data.nextPage).prop('disabled', false);
 			} else {
@@ -76,6 +172,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'hooks'], function (api, al
 		const a = $('<a class="bg-card bg-open"></a>');
 		a.attr({
 			href: `${config.relative_path}/topic/${item.slug}`,
+			'data-index': item.index,
 			'data-tid': item.tid,
 			'data-pid': item.pid,
 			'data-image': item.image,
@@ -86,7 +183,11 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'hooks'], function (api, al
 			'data-author': decode(item.user.displayname),
 			'data-userslug': item.user.userslug,
 		});
-		$('<img loading="lazy" decoding="async">').attr({ src: item.thumb || item.image, alt: decode(item.title) }).appendTo(a);
+		const img = $('<img loading="lazy" decoding="async">').attr({ src: item.thumb || item.image, alt: decode(item.title) });
+		if (item.w > 0 && item.h > 0) {
+			img.attr({ width: item.w, height: item.h });
+		}
+		img.appendTo(a);
 		const overlay = $('<div class="bg-card__overlay"></div>').appendTo(a);
 		$('<div class="bg-card__title"></div>').html(item.title).appendTo(overlay);
 		const meta = $('<div class="bg-card__meta"></div>').appendTo(overlay);

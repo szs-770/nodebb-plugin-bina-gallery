@@ -55,6 +55,7 @@
 		> img {
 			display: block;
 			width: 100%;
+			height: auto;
 			max-height: 420px;
 			object-fit: cover;
 			opacity: 0.92;
@@ -111,12 +112,29 @@
 	}
 
 	// Masonry grid – keeps each image's original proportions
+	// Masonry grid. public/gallery.js places the cards in order (newest first) into the currently
+	// shortest column, so the top row always holds the first cards, right to left.
+	// Before the script runs (or without it) the cards fall back to CSS columns.
 	.bg-grid {
-		column-count: 4;
-		column-gap: 0.75rem;
+		--bg-cols: 4;
+		--bg-gap: 0.75rem;
+		column-count: var(--bg-cols);
+		column-gap: var(--bg-gap);
 
-		@media (max-width: 1199.98px) { column-count: 3; }
-		@media (max-width: 767.98px) { column-count: 2; column-gap: 0.5rem; }
+		@media (max-width: 1199.98px) { --bg-cols: 3; }
+		@media (max-width: 767.98px) { --bg-cols: 2; --bg-gap: 0.5rem; }
+
+		&.bg-grid--masonry {
+			display: flex;
+			align-items: flex-start;
+			gap: var(--bg-gap);
+			column-count: auto;
+		}
+	}
+
+	.bg-col {
+		flex: 1 1 0;
+		min-width: 0;
 	}
 
 	.bg-card {

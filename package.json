@@ -1,6 +1,6 @@
 {
   "name": "nodebb-plugin-bina-gallery",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Bina Top: AI creations gallery page (/gallery) built on a forum category",
   "main": "library.js",
   "license": "MIT",

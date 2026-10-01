@@ -469,19 +469,33 @@ async function getGalleryItems(uid, cid, sort) {
 // Anything that is not a local upload, or animated GIFs, is shown as is.
 const pendingThumbs = new Map();
 
+// File path of a local upload URL (inside the uploads folder), or null
+function uploadFile(url) {
+	const uploadUrl = `${nconf.get('relative_path')}${nconf.get('upload_url')}`;
+	if (typeof url !== 'string' || !url.startsWith(`${uploadUrl}/`)) {
+		return null;
+	}
+	let relative;
+	try {
+		relative = decodeURIComponent(url.slice(uploadUrl.length + 1).split('?')[0]);
+	} catch (e) {
+		return null;
+	}
+	const uploadPath = path.resolve(nconf.get('upload_path'));
+	const file = path.resolve(uploadPath, relative);
+	return file.startsWith(`${uploadPath}${path.sep}`) ? { file, relative } : null;
+}
+
 // Where the thumbnail of an uploaded image is stored, or null when the image is not a local upload
 // (or is a GIF, which keeps its animation and is shown as is).
 function thumbInfo(url, width) {
 	const uploadUrl = `${nconf.get('relative_path')}${nconf.get('upload_url')}`;
-	if (typeof url !== 'string' || !url.startsWith(`${uploadUrl}/`) || /\.gif$/i.test(url)) {
+	const local = uploadFile(url);
+	if (!local || /\.gif$/i.test(local.file)) {
 		return null;
 	}
-	const relative = decodeURIComponent(url.slice(uploadUrl.length + 1).split('?')[0]);
+	const { file: source, relative } = local;
 	const uploadPath = nconf.get('upload_path');
-	const source = path.resolve(uploadPath, relative);
-	if (!source.startsWith(`${path.resolve(uploadPath)}${path.sep}`)) {
-		return null;
-	}
 	const name = `${crypto.createHash('sha1').update(relative).digest('hex').slice(0, 20)}-${width}.webp`;
 	return {
 		name,
@@ -545,8 +559,9 @@ async function deleteThumbs(tid) {
 		...await db.getSetMembers(THUMBS_SET(tid)),
 		...await currentThumbNames(tid),
 	]);
-	const dir = path.join(nconf.get('upload_path'), THUMB_DIR);
+	const dir = path.resolve(nconf.get('upload_path'), THUMB_DIR);
 	await Promise.all(names.filter(name => /^[0-9a-f]{20}-\d+\.webp$/.test(name)).map(async (name) => {
+		imageSizes.delete(path.join(dir, name));
 		try {
 			await fs.promises.unlink(path.join(dir, name));
 		} catch (err) {
@@ -585,6 +600,40 @@ async function indexExistingThumbs() {
 	await db.set(THUMBS_INDEXED_KEY, Date.now());
 }
 
+// Display size (width/height) of a local image, so the grid can reserve the card's space before the
+// image loads and place it in the right column. Read from the file header once, then cached.
+const imageSizes = new Map();
+const IMAGE_SIZES_MAX = 5000;
+
+async function getImageSize(url) {
+	const local = uploadFile(url);
+	if (!local) {
+		return null;
+	}
+	if (imageSizes.has(local.file)) {
+		return imageSizes.get(local.file);
+	}
+	let size = null;
+	try {
+		const sharp = nodebb.require('sharp');
+		const meta = await sharp(local.file, { failOn: 'none' }).metadata();
+		if (meta.width > 0 && meta.height > 0) {
+			// EXIF orientations 5–8 are rotated by 90°
+			size = meta.orientation >= 5 ? { w: meta.height, h: meta.width } : { w: meta.width, h: meta.height };
+			if (meta.pages > 1 && meta.pageHeight) {
+				size.h = meta.pageHeight; // animated image: one frame
+			}
+		}
+	} catch (err) {
+		return null; // missing or unreadable file: not cached, try again next time
+	}
+	if (imageSizes.size >= IMAGE_SIZES_MAX) {
+		imageSizes.clear();
+	}
+	imageSizes.set(local.file, size);
+	return size;
+}
+
 function toItem(t, voteStatus, idx) {
 	return {
 		tid: t.tid,
@@ -609,12 +658,19 @@ function toItem(t, voteStatus, idx) {
 	};
 }
 
-async function toItems(list, uid, width = GRID_WIDTH) {
+async function toItems(list, uid, width = GRID_WIDTH, start = 0) {
 	const [voteStatus, thumbs] = await Promise.all([
 		uid > 0 ? posts.getVoteStatusByPostIDs(list.map(t => t.mainPid), uid) : null,
 		Promise.all(list.map(t => getThumb(t.thumbs[0].url, width, t.tid))),
 	]);
-	return list.map((t, i) => ({ ...toItem(t, voteStatus, i), thumb: thumbs[i] }));
+	const sizes = await Promise.all(thumbs.map(getImageSize));
+	return list.map((t, i) => ({
+		...toItem(t, voteStatus, i),
+		thumb: thumbs[i],
+		w: sizes[i] ? sizes[i].w : 0,
+		h: sizes[i] ? sizes[i].h : 0,
+		index: start + i,
+	}));
 }
 
 async function renderGallery(req, res, next) {
@@ -660,7 +716,7 @@ async function renderGallery(req, res, next) {
 		categories.getCategoryFields(settings.cid, ['cid', 'name', 'slug']),
 	]);
 	const start = (page - 1) * PAGE_SIZE;
-	const items = await toItems(list.slice(start, start + PAGE_SIZE), req.uid);
+	const items = await toItems(list.slice(start, start + PAGE_SIZE), req.uid, GRID_WIDTH, start);
 
 	// "Creation of the day" – most liked creation from the last 24 hours, on the first page only
 	let featured = null;
