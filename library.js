@@ -60,6 +60,7 @@ const SORTS = [
 	{ key: 'week', label: 'השבוע', seconds: 7 * 86400 },
 	{ key: 'month', label: 'החודש', seconds: 30 * 86400 },
 	{ key: 'all', label: 'כל הזמנים' },
+	{ key: 'following', label: 'יוצרים שאני עוקב', icon: 'fa-user-group', loggedIn: true },
 	{ key: 'creators', label: 'יוצרים מובילים', icon: 'fa-trophy' },
 ];
 
@@ -83,6 +84,12 @@ async function getSettings() {
 plugin.init = async ({ router, middleware }) => {
 	routeHelpers.setupPageRoute(router, '/gallery', renderGallery);
 	routeHelpers.setupPageRoute(router, '/gallery/:tid', renderCreation);
+	// A creation's forum topic opens its gallery page. Plugin routes run before core's, and anything
+	// that is not a creation simply continues to the regular topic page.
+	router.get([
+		'/topic/:topic_id/:slug?/:post_index?',
+		'/api/topic/:topic_id/:slug?/:post_index?',
+	], redirectCreationTopic);
 	// "Gallery" tab in user profiles, with the same middlewares core uses for the other profile pages
 	routeHelpers.setupPageRoute(router, '/user/:userslug/gallery', [
 		middleware.exposeUid,
@@ -657,8 +664,14 @@ plugin.addProfileData = async (hookData) => {
 
 /* -------------------------------------------------------------- gallery */
 
-async function getCandidateTids(cid, sort) {
+async function getCandidateTids(cid, sort, uid) {
 	const sortDef = SORTS.find(s => s.key === sort) || SORTS[0];
+	if (sortDef.key === 'following') {
+		// creations of the people this user follows, newest first
+		const uids = uid > 0 ? await db.getSortedSetRange(`following:${uid}`, 0, -1) : [];
+		const sets = uids.filter(u => parseInt(u, 10) > 0).map(u => `cid:${cid}:uid:${u}:tids`);
+		return { tids: sets.length ? await db.getSortedSetRevRange(sets, 0, MAX_SCAN - 1) : [], byVotes: false };
+	}
 	if (sortDef.key === 'all') {
 		return { tids: await db.getSortedSetRevRange(`cid:${cid}:tids:votes`, 0, MAX_SCAN - 1), byVotes: false };
 	}
@@ -671,7 +684,7 @@ async function getCandidateTids(cid, sort) {
 }
 
 async function getGalleryItems(uid, cid, sort) {
-	const { tids: allTids, byVotes } = await getCandidateTids(cid, sort);
+	const { tids: allTids, byVotes } = await getCandidateTids(cid, sort, uid);
 	const tids = await privileges.topics.filterTids('topics:read', allTids, uid);
 	let list = await topics.getTopicsByTids(tids, uid);
 	list = list.filter(t => t && !t.deleted && !t.pinned && t.thumbs && t.thumbs.length);
@@ -898,20 +911,114 @@ async function toItems(list, uid, width = GRID_WIDTH, start = 0) {
 	}));
 }
 
+/* -------------------------------------------------------------- filters */
+
+// Tools are free text ("נייט קפה (מכוונן עדין)", "נייט קפה · SDXL 1.0"), so they are grouped by
+// their first part: the text before " · ", "(", ":", "+", "," or a period.
+function toolKey(tool) {
+	return String(tool || '').split(/\s·\s|[(:+,]|\.\s|\.$/)[0].replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function toolLabel(tool) {
+	return String(tool || '').split(/\s·\s|[(:+,]|\.\s|\.$/)[0].replace(/\s+/g, ' ').trim();
+}
+
+// "נייט קפה Virtual Utopia XL" belongs to "נייט קפה" when that name is used on its own too
+function toolGroups(list) {
+	const keys = [...new Set(list.map(t => toolKey(t.bgTool)).filter(Boolean))].sort((a, b) => a.length - b.length);
+	const groups = new Map();
+	keys.forEach((key) => {
+		const parent = keys.find(k => k.length < key.length && key.startsWith(`${k} `));
+		groups.set(key, parent ? groups.get(parent) : key);
+	});
+	return groups;
+}
+
+function readFilters(query) {
+	const one = v => (Array.isArray(v) ? v[0] : v);
+	const clean = v => String(one(v) || '').trim().slice(0, 100);
+	return {
+		tool: clean(query.tool).toLowerCase(),
+		style: clean(query.style),
+		usage: USAGE[clean(query.usage)] ? clean(query.usage) : '',
+	};
+}
+
+function hasFilters(f) {
+	return !!(f.tool || f.style || f.usage);
+}
+
+function applyFilters(list, f, groups) {
+	return list.filter(t => (!f.tool || (groups.get(toolKey(t.bgTool)) || toolKey(t.bgTool)) === f.tool) &&
+		(!f.style || parseStyles(t.bgStyles).includes(f.style)) &&
+		(!f.usage || t.bgUsage === f.usage ||
+			// "personal use" also matches creations that allow commercial use
+			(f.usage === 'personal' && t.bgUsage === 'commercial')));
+}
+
+function filterQuery(f) {
+	const params = new URLSearchParams();
+	['tool', 'style', 'usage'].forEach((k) => {
+		if (f[k]) {
+			params.set(k, f[k]);
+		}
+	});
+	return params.toString();
+}
+
+// Options for the filter menus, counted over all visible creations
+function getFacets(list, f, groups) {
+	const tools = new Map();
+	const styles = new Map();
+	const labels = new Map(list.map(t => [toolKey(t.bgTool), toolLabel(t.bgTool)]));
+	list.forEach((t) => {
+		const key = groups.get(toolKey(t.bgTool));
+		if (key) {
+			const entry = tools.get(key) || { key, label: labels.get(key) || toolLabel(t.bgTool), count: 0 };
+			entry.count += 1;
+			tools.set(key, entry);
+		}
+		parseStyles(t.bgStyles).forEach(name => styles.set(name, (styles.get(name) || 0) + 1));
+	});
+	const esc = v => validator.escape(String(v));
+	return {
+		tools: [...tools.values()].sort((a, b) => b.count - a.count).slice(0, 15)
+			.map(tl => ({ value: esc(tl.key), label: esc(tl.label), count: tl.count, selected: tl.key === f.tool })),
+		styles: [...styles.entries()].sort((a, b) => b[1] - a[1])
+			.map(([name, count]) => ({ value: esc(name), label: esc(name), count, selected: name === f.style })),
+		usages: [
+			{ value: 'commercial', label: 'מותר לשימוש מסחרי' },
+			{ value: 'personal', label: 'מותר לשימוש אישי' },
+			{ value: 'none', label: 'רק באישור היוצר' },
+		].map(u => ({ ...u, selected: u.value === f.usage })),
+	};
+}
+
 async function renderGallery(req, res, next) {
 	const settings = await getSettings();
 	if (!settings.cid || !await categories.exists(settings.cid)) {
 		return next();
 	}
-	const sort = SORTS.some(s => s.key === req.query.sort) ? req.query.sort : 'new';
+	const loggedIn = req.uid > 0;
+	const sort = SORTS.some(s => s.key === req.query.sort && (!s.loggedIn || loggedIn)) ? req.query.sort : 'new';
 	const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-	const sortsData = SORTS.map(s => ({
-		key: s.key,
-		label: s.label,
-		icon: s.icon || '',
-		active: s.key === sort,
-		url: s.key === 'new' ? '/gallery' : `/gallery?sort=${s.key}`,
-	}));
+	const filters = readFilters(req.query);
+	const fq = filterQuery(filters);
+	const sortsData = SORTS.filter(s => !s.loggedIn || loggedIn).map((s) => {
+		// the sorts keep the current filters (the leaderboard has none)
+		const params = new URLSearchParams(s.key === 'creators' ? '' : fq);
+		if (s.key !== 'new') {
+			params.set('sort', s.key);
+		}
+		const qs = params.toString();
+		return {
+			key: s.key,
+			label: s.label,
+			icon: s.icon || '',
+			active: s.key === sort,
+			url: `/gallery${qs ? `?${qs}` : ''}`,
+		};
+	});
 
 	if (sort === 'creators') {
 		const [leaders, canPost, category] = await Promise.all([
@@ -938,17 +1045,21 @@ async function renderGallery(req, res, next) {
 		});
 	}
 
-	const [list, canPost, category] = await Promise.all([
+	const [sorted, everything, canPost, category] = await Promise.all([
 		getGalleryItems(req.uid, settings.cid, sort),
+		sort === 'new' ? null : getGalleryItems(req.uid, settings.cid, 'new'),
 		privileges.categories.can('topics:create', settings.cid, req.uid),
 		categories.getCategoryFields(settings.cid, ['cid', 'name', 'slug']),
 	]);
+	const groups = toolGroups(everything || sorted);
+	const list = applyFilters(sorted, filters, groups);
+	const facets = getFacets(everything || sorted, filters, groups);
 	const start = (page - 1) * PAGE_SIZE;
 	const items = await toItems(list.slice(start, start + PAGE_SIZE), req.uid, GRID_WIDTH, start);
 
 	// "Creation of the day" – most liked creation from the last 24 hours, on the first page only
 	let featured = null;
-	if (page === 1 && sort === 'new') {
+	if (page === 1 && sort === 'new' && !hasFilters(filters)) {
 		const day = await getGalleryItems(req.uid, settings.cid, 'day');
 		if (day.length) {
 			[featured] = await toItems(day.slice(0, 1), req.uid, FEATURED_WIDTH);
@@ -968,7 +1079,16 @@ async function renderGallery(req, res, next) {
 		featured,
 		hasFeatured: !!featured,
 		empty: !items.length,
+		emptyFollowing: !items.length && sort === 'following' && !hasFilters(filters),
+		emptyFiltered: !items.length && hasFilters(filters),
 		total: list.length,
+		filters: { tool: validator.escape(filters.tool), style: validator.escape(filters.style), usage: filters.usage },
+		filtered: hasFilters(filters),
+		filterQuery: validator.escape(fq),
+		clearUrl: sort === 'new' ? '/gallery' : `/gallery?sort=${sort}`,
+		facets,
+		hasToolFacet: facets.tools.length > 0,
+		hasStyleFacet: facets.styles.length > 0,
 		page,
 		hasMore: start + PAGE_SIZE < list.length,
 		nextPage: page + 1,
@@ -1127,6 +1247,91 @@ async function renderCreation(req, res, next) {
 		cid: settings.cid,
 	});
 }
+
+/* ------------------------------------------- topic page -> creation page */
+
+// The regular topic view stays available with ?raw=1 (moderation tools, the full thread),
+// and for ActivityPub requests. Deleted creations and topics without a picture are not redirected
+// (the creation page would send them back here).
+async function redirectCreationTopic(req, res, next) {
+	try {
+		const tid = parseInt(req.params.topic_id, 10);
+		const accept = String(req.get('accept') || '');
+		if (!(tid > 0) || req.query.raw || /activity\+json|ld\+json/.test(accept)) {
+			return next();
+		}
+		const { cid } = await getSettings();
+		const topic = cid ? await topics.getTopicFields(tid, ['tid', 'cid', 'deleted', 'mainPid']) : null;
+		if (!topic || !topic.tid || parseInt(topic.cid, 10) !== cid || topic.deleted) {
+			return next();
+		}
+		const [thumbs] = await topics.thumbs.load([topic]);
+		if (!thumbs || !thumbs.length) {
+			return next();
+		}
+		res.locals.isAPI = res.locals.isAPI || req.path.startsWith('/api/');
+		const anchor = req.params.post_index && parseInt(req.params.post_index, 10) > 1 ? '#comments' : '';
+		return helpers.redirect(res, `/gallery/${tid}${anchor}`);
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+		return next();
+	}
+}
+
+/* ------------------------------------- forum profile lists without the gallery */
+
+// Creations (and comments on them) have their own profile tab, so the regular "topics" and
+// "posts" lists of a profile, and its main page, leave the gallery category out.
+const PROFILE_LISTS = { 'account/topics': 'tids', 'account/posts': 'pids' };
+
+plugin.filterAccountLists = async (hookData) => {
+	const { req, template, userData, settings, data, start, stop } = hookData;
+	let sets = await data.getSets(req.uid, userData);
+	try {
+		const { cid } = await getSettings();
+		if (cid && PROFILE_LISTS[template]) {
+			const skip = `cid:${cid}:uid:${userData.uid}:${PROFILE_LISTS[template]}`;
+			sets = (Array.isArray(sets) ? sets : [sets]).filter(set => set !== skip);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	// the same as core does without this hook (controllers/accounts/posts.js)
+	if (Array.isArray(sets) && !sets.length) {
+		hookData.itemCount = 0;
+		hookData.itemData = { [data.type]: [], nextStart: 0 };
+		return hookData;
+	}
+	const count = async () => {
+		if (!settings.usePagination) {
+			return 0;
+		}
+		return data.getItemCount ? await data.getItemCount(sets) : await db.sortedSetsCardSum(sets);
+	};
+	const items = async () => {
+		if (data.getTopics) {
+			return await data.getTopics(sets, req, start, stop);
+		}
+		const method = data.type === 'topics' ? topics.getTopicsFromSet : posts.getPostSummariesFromSet;
+		return await method(sets, req.uid, start, stop);
+	};
+	[hookData.itemCount, hookData.itemData] = await Promise.all([count(), items()]);
+	return hookData;
+};
+
+plugin.filterProfilePids = async (hookData) => {
+	try {
+		const { cid } = await getSettings();
+		if (cid && hookData.pids && hookData.pids.length) {
+			const tids = (await posts.getPostsFields(hookData.pids, ['tid'])).map(p => p && p.tid);
+			const cids = await topics.getTopicsFields(tids, ['cid']);
+			hookData.pids = hookData.pids.filter((pid, i) => !cids[i] || parseInt(cids[i].cid, 10) !== cid);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return hookData;
+};
 
 /* ----------------------------------------------------- profile gallery tab */
 

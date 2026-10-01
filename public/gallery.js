@@ -50,6 +50,19 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 
 		root.on('click', '.bg-load-more', loadMore);
 
+		// Filters: every change reloads the gallery with the chosen tool / style / usage
+		root.on('change', '.bg-filters select', function () {
+			const params = new URLSearchParams();
+			$(this).closest('form').serializeArray().forEach(({ name, value }) => {
+				if (value && !(name === 'sort' && value === 'new')) {
+					params.set(name, value);
+				}
+			});
+			const qs = params.toString();
+			ajaxify.go(`gallery${qs ? `?${qs}` : ''}`);
+		});
+		root.on('submit', '.bg-filters', e => e.preventDefault());
+
 		masonry.init(root.find('.bg-grid'));
 
 		$(window).one('action:ajaxify.start', () => {
@@ -392,7 +405,8 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		// the gallery itself, or another list of creations (the profile tab) that names its own API
 		const url = root.attr('data-api') ?
 			`${config.relative_path}${root.attr('data-api')}?page=${next}` :
-			`${config.relative_path}/api/gallery?sort=${encodeURIComponent(root.attr('data-sort') || 'new')}&page=${next}`;
+			`${config.relative_path}/api/gallery?sort=${encodeURIComponent(root.attr('data-sort') || 'new')}&page=${next}` +
+				(root.attr('data-query') ? `&${root.attr('data-query')}` : '');
 		btn.prop('disabled', true);
 		try {
 			const res = await fetch(url, {

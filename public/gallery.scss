@@ -289,6 +289,77 @@
 		text-align: end;
 	}
 
+	// Filters under the sort pills
+	.bg-filters {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		margin: -0.25rem 0 1rem;
+	}
+
+	.bg-filter {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		margin: 0;
+
+		i {
+			position: absolute;
+			inset-inline-start: 0.75rem;
+			color: var(--bs-secondary-color);
+			font-size: 0.8rem;
+			pointer-events: none;
+		}
+
+		.form-select {
+			max-width: 15rem;
+			padding-inline-start: 2rem;
+			border-radius: 999px;
+			background-color: var(--bs-tertiary-bg);
+			border-color: transparent;
+			font-size: 0.85rem;
+			cursor: pointer;
+		}
+
+		&.is-set {
+			i { color: var(--bg-accent); }
+
+			.form-select {
+				border-color: var(--bg-accent);
+				background-color: rgba(184, 106, 214, 0.1);
+				font-weight: 600;
+			}
+		}
+	}
+
+	.bg-filters__clear {
+		color: var(--bg-accent);
+		font-size: 0.85rem;
+		font-weight: 600;
+		text-decoration: none;
+	}
+
+	.bg-filters__count {
+		color: var(--bs-secondary-color);
+		font-size: 0.85rem;
+	}
+
+	// phones: the three menus share one row
+	@media (max-width: 575.98px) {
+		.bg-filters { gap: 0.35rem; }
+		.bg-filter { flex: 1 1 0; min-width: 0; }
+		.bg-filter i { display: none; }
+
+		.bg-filter .form-select {
+			max-width: none;
+			width: 100%;
+			padding-inline-start: 0.7rem;
+			font-size: 0.78rem;
+			text-overflow: ellipsis;
+		}
+	}
+
 	.bg-empty {
 		padding: 3rem 1rem;
 		text-align: center;

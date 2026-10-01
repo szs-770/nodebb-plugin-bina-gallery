@@ -1,4 +1,4 @@
-<div class="bina-gallery" data-sort="{sort}" data-cid="{cid}">
+<div class="bina-gallery" data-sort="{sort}" data-cid="{cid}" data-query="{filterQuery}">
 	<div class="bg-hero">
 		<div class="bg-hero__text">
 			<h1 class="bg-hero__title"><i class="fa-solid fa-images"></i> גלריית יצירות</h1>
@@ -36,6 +36,43 @@
 		{{{ end }}}
 	</ul>
 
+	{{{ if !creatorsView }}}
+	<form class="bg-filters" role="search" aria-label="סינון יצירות">
+		<input type="hidden" name="sort" value="{sort}">
+		<label class="bg-filter {{{ if filters.tool }}}is-set{{{ end }}}">
+			<i class="fa-solid fa-wand-magic-sparkles"></i>
+			<select name="tool" class="form-select form-select-sm" aria-label="כלי">
+				<option value="">כל הכלים</option>
+				{{{ each facets.tools }}}
+				<option value="{./value}" {{{ if ./selected }}}selected{{{ end }}}>{./label} ({./count})</option>
+				{{{ end }}}
+			</select>
+		</label>
+		<label class="bg-filter {{{ if filters.style }}}is-set{{{ end }}}">
+			<i class="fa-solid fa-palette"></i>
+			<select name="style" class="form-select form-select-sm" aria-label="סגנון">
+				<option value="">כל הסגנונות</option>
+				{{{ each facets.styles }}}
+				<option value="{./value}" {{{ if ./selected }}}selected{{{ end }}}>{./label} ({./count})</option>
+				{{{ end }}}
+			</select>
+		</label>
+		<label class="bg-filter {{{ if filters.usage }}}is-set{{{ end }}}">
+			<i class="fa-solid fa-scale-balanced"></i>
+			<select name="usage" class="form-select form-select-sm" aria-label="אישור שימוש">
+				<option value="">כל השימושים</option>
+				{{{ each facets.usages }}}
+				<option value="{./value}" {{{ if ./selected }}}selected{{{ end }}}>{./label}</option>
+				{{{ end }}}
+			</select>
+		</label>
+		{{{ if filtered }}}
+		<a class="bg-filters__clear" href="{config.relative_path}{clearUrl}"><i class="fa-solid fa-xmark"></i> ניקוי הסינון</a>
+		<span class="bg-filters__count">{total} יצירות</span>
+		{{{ end }}}
+	</form>
+	{{{ end }}}
+
 	{{{ if creatorsView }}}
 	<div class="bg-leaders">
 		<p class="bg-leaders__intro">הניקוד של יוצר הוא סך הלייקים שקיבל על היצירות שלו בגלריה. זה ניקוד נפרד מהמוניטין הרגיל של הפורום.</p>
@@ -58,8 +95,18 @@
 
 	{{{ if empty }}}
 	<div class="bg-empty">
+		{{{ if emptyFiltered }}}
+		<i class="fa-solid fa-filter-circle-xmark"></i>
+		<p>אין יצירות שמתאימות לסינון. <a href="{config.relative_path}{clearUrl}">ניקוי הסינון</a></p>
+		{{{ else }}}
+		{{{ if emptyFollowing }}}
+		<i class="fa-solid fa-user-group"></i>
+		<p>כאן יופיעו יצירות של יוצרים שאתם עוקבים אחריהם. אפשר לעקוב אחרי יוצר מעמוד של יצירה שלו.</p>
+		{{{ else }}}
 		<i class="fa-regular fa-image"></i>
 		<p>עוד אין כאן יצירות. תהיו הראשונים לשתף!</p>
+		{{{ end }}}
+		{{{ end }}}
 	</div>
 	{{{ end }}}
 

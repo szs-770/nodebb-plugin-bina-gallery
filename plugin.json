@@ -61,6 +61,14 @@
       "method": "onTopicMove"
     },
     {
+      "hook": "filter:account.getPostsFromUserSet",
+      "method": "filterAccountLists"
+    },
+    {
+      "hook": "filter:account.profile.getPids",
+      "method": "filterProfilePids"
+    },
+    {
       "hook": "filter:user.profileMenu",
       "method": "addProfileMenu"
     },

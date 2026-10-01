@@ -51,7 +51,7 @@
 				{{{ if canEdit }}}
 				<button type="button" class="btn bgc-btn bgc-edit"><i class="fa-solid fa-pen"></i> עריכה</button>
 				{{{ end }}}
-				<a class="btn bgc-btn bgc-icon" href="{config.relative_path}/topic/{slug}" title="הנושא בפורום" aria-label="הנושא בפורום"><i class="fa-regular fa-comments"></i></a>
+				<a class="btn bgc-btn bgc-icon" href="{config.relative_path}/topic/{slug}?raw=1" title="הנושא בפורום" aria-label="הנושא בפורום"><i class="fa-regular fa-comments"></i></a>
 			</div>
 
 			{{{ if usage }}}
