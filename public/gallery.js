@@ -64,6 +64,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		root.on('submit', '.bg-filters', e => e.preventDefault());
 
 		masonry.init(root.find('.bg-grid'));
+		initSorts(root.find('.bg-sorts'));
 
 		$(window).one('action:ajaxify.start', () => {
 			closeLightbox();
@@ -77,6 +78,32 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		const grid = root.find('.bg-grid .bg-card').toArray()
 			.sort((a, b) => (parseInt(a.dataset.index, 10) || 0) - (parseInt(b.dataset.index, 10) || 0));
 		return $(root.find('.bg-featured').toArray().concat(grid));
+	}
+
+	// On narrow screens the sort tabs scroll sideways. Bring the active tab into view (it can be the
+	// last one, e.g. "יוצרים מובילים") and fade the edges so it is clear there is more to scroll.
+	function initSorts(list) {
+		const el = list[0];
+		if (!el) {
+			return;
+		}
+		const update = () => {
+			const max = el.scrollWidth - el.clientWidth;
+			const pos = Math.abs(el.scrollLeft); // negative in RTL
+			el.classList.toggle('is-scrollable', max > 2);
+			el.classList.toggle('at-start', pos < 2);
+			el.classList.toggle('at-end', pos > max - 2);
+		};
+		const active = el.querySelector('.nav-link.active');
+		if (active && el.scrollWidth > el.clientWidth) {
+			const box = el.getBoundingClientRect();
+			const tab = active.getBoundingClientRect();
+			el.scrollLeft += (tab.left + (tab.width / 2)) - (box.left + (box.width / 2));
+		}
+		update();
+		el.addEventListener('scroll', update, { passive: true });
+		$(window).on('resize.binaSorts', update);
+		$(window).one('action:ajaxify.start', () => $(window).off('resize.binaSorts'));
 	}
 
 	/* -------------------------------------------------------- masonry */
@@ -537,6 +564,29 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			}
 		});
 
+		// Touch: swipe sideways to move between creations, swipe down to close.
+		// RTL: the next creation is on the left, so a swipe to the right brings it in.
+		let touch = null;
+		lightbox.on('touchstart', (e) => {
+			const t = e.originalEvent.touches;
+			touch = t.length === 1 && !$(e.target).closest('.bg-lb__prompt, .bg-lb__actions').length ?
+				{ x: t[0].clientX, y: t[0].clientY } : null;
+		});
+		lightbox.on('touchend', (e) => {
+			const t = e.originalEvent.changedTouches;
+			if (!touch || !t.length) {
+				return;
+			}
+			const dx = t[0].clientX - touch.x;
+			const dy = t[0].clientY - touch.y;
+			touch = null;
+			if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+				show(cards, current + (dx > 0 ? 1 : -1));
+			} else if (dy > 90 && dy > Math.abs(dx) * 1.5) {
+				closeLightbox();
+			}
+		});
+
 		show(cards, index);
 		lightbox.trigger('focus');
 	}
@@ -632,6 +682,10 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			return ajaxify.go('login');
 		}
 		const d = card[0].dataset;
+		if (d.voting === 'true') {
+			return; // a quick second tap would send the same vote twice
+		}
+		d.voting = 'true';
 		const liked = d.upvoted === 'true';
 		try {
 			if (liked) {
@@ -647,6 +701,8 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			}
 		} catch (err) {
 			alerts.error(err);
+		} finally {
+			delete d.voting;
 		}
 	}
 

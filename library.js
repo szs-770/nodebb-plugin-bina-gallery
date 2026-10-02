@@ -867,11 +867,31 @@ async function getImageSize(url) {
 	return size;
 }
 
+// Forum titles may start with a topic type ("שיתוף | …", from the custom JS topic type selector).
+// In the gallery the prefix is noise, so creations are shown without it (the topic keeps it).
+// A title that is only a prefix gets the same default as a creation shared without a title.
+const TYPE_PREFIX = /^\s*(?:שאלה|בירור|שיתוף|המלצה|מדריך|באג|להורדה|עדכון|דיון|סקר)\s*\|\s*/;
+function displayTitle(topic) {
+	const title = String(topic.title || '').replace(TYPE_PREFIX, '').trim();
+	// displayname comes escaped, like the title
+	return title || `יצירה של ${(topic.user && topic.user.displayname) || ''}`.trim();
+}
+
+// Comments per creation. topic.postcount also counts deleted replies (creation 319 showed 7, with 1
+// visible), so count the replies (tid:<tid>:posts, without the main post) that are not deleted.
+async function getReplyCounts(list) {
+	const pidLists = await db.getSortedSetsMembers(list.map(t => `tid:${t.tid}:posts`));
+	const all = pidLists.flat();
+	const fields = all.length ? await db.getObjectsFields(all.map(pid => `post:${pid}`), ['deleted']) : [];
+	const deleted = new Set(all.filter((pid, i) => fields[i] && parseInt(fields[i].deleted, 10) === 1).map(String));
+	return pidLists.map(pids => pids.filter(pid => !deleted.has(String(pid))).length);
+}
+
 function toItem(t, voteStatus, idx) {
 	return {
 		tid: t.tid,
 		slug: t.slug,
-		title: t.title,
+		title: displayTitle(t),
 		image: t.thumbs[0].url,
 		thumb: t.thumbs[0].url,
 		pid: t.mainPid,
@@ -897,13 +917,15 @@ function toItem(t, voteStatus, idx) {
 }
 
 async function toItems(list, uid, width = GRID_WIDTH, start = 0) {
-	const [voteStatus, thumbs] = await Promise.all([
+	const [voteStatus, thumbs, replies] = await Promise.all([
 		uid > 0 ? posts.getVoteStatusByPostIDs(list.map(t => t.mainPid), uid) : null,
 		Promise.all(list.map(t => getThumb(t.thumbs[0].url, width, t.tid))),
+		getReplyCounts(list),
 	]);
 	const sizes = await Promise.all(thumbs.map(getImageSize));
 	return list.map((t, i) => ({
 		...toItem(t, voteStatus, i),
+		replies: replies[i],
 		thumb: thumbs[i],
 		w: sizes[i] ? sizes[i].w : 0,
 		h: sizes[i] ? sizes[i].h : 0,
@@ -1202,7 +1224,7 @@ async function renderCreation(req, res, next) {
 
 	res.locals.metaTags = [
 		{ name: 'description', content: validator.escape(description) },
-		{ property: 'og:title', content: topic.title },
+		{ property: 'og:title', content: item.title },
 		{ property: 'og:description', content: validator.escape(description) },
 		{ property: 'og:type', content: 'article' },
 		{ property: 'og:image', content: absoluteUrl(item.thumb) },
@@ -1217,8 +1239,8 @@ async function renderCreation(req, res, next) {
 	res.locals.linkTags = [{ rel: 'canonical', href: `${nconf.get('url')}/gallery/${tid}` }];
 
 	res.render('gallery-item', {
-		title: topic.title,
-		breadcrumbs: [{ text: 'גלריית יצירות', url: '/gallery' }, { text: topic.title }],
+		title: item.title,
+		breadcrumbs: [{ text: 'גלריית יצירות', url: '/gallery' }, { text: item.title }],
 		item,
 		image: item.image,
 		tid,
@@ -1245,8 +1267,8 @@ async function renderCreation(req, res, next) {
 		loggedIn: req.uid > 0,
 		comments,
 		commentCount: comments.length,
-		newer: newer ? { tid: newer.tid, title: newer.title } : null,
-		older: older ? { tid: older.tid, title: older.title } : null,
+		newer: newer ? { tid: newer.tid, title: displayTitle(newer) } : null,
+		older: older ? { tid: older.tid, title: displayTitle(older) } : null,
 		position: position >= 0 ? position + 1 : 0,
 		total: list.length,
 		more: moreItems,

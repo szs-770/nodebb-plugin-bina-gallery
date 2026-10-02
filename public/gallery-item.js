@@ -26,6 +26,13 @@ define('forum/gallery-item', ['api', 'alerts', 'helpers', 'hooks'], function (ap
 			e.preventDefault();
 			sendReply(root, tid, $(this));
 		});
+		// Ctrl+Enter (⌘+Enter on Mac) sends, like the forum's composer
+		root.on('keydown', '.bgc-reply textarea', function (e) {
+			if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+				e.preventDefault();
+				$(this).closest('form').trigger('submit');
+			}
+		});
 
 		// Arrow keys move between creations (not while typing)
 		$(document).off('keydown.binaCreation').on('keydown.binaCreation', (e) => {
