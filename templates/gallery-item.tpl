@@ -6,6 +6,7 @@
 
 	<div class="bgc-layout">
 		<div class="bgc-stage">
+			<div class="bgc-backdrop" aria-hidden="true"></div>
 			<a class="bgc-image" href="{image}" target="_blank" rel="noopener" title="פתיחה בגודל מלא">
 				<img src="{item.thumb}" alt="{item.title}" {{{ if item.w }}}width="{item.w}" height="{item.h}" {{{ end }}}fetchpriority="high">
 			</a>

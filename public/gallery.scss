@@ -172,6 +172,36 @@
 		@media (max-width: 767.98px) { margin-bottom: 0.5rem; }
 	}
 
+	// Like from the grid (topic 360): a heart in the corner, shown on hover / keyboard focus.
+	// Always visible once liked. Touch screens have no hover: there the lightbox's double tap likes.
+	.bg-card__like {
+		position: absolute;
+		top: 0.5rem;
+		inset-inline-end: 0.5rem;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 50%;
+		background: rgba(0, 0, 0, 0.45);
+		color: #fff;
+		font-size: 1rem;
+		opacity: 0;
+		transition: opacity 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
+		cursor: pointer;
+
+		&:hover { background: rgba(0, 0, 0, 0.65); transform: scale(1.08); }
+		&:focus-visible { opacity: 1; outline: 2px solid #fff; outline-offset: 2px; }
+		&.is-liked { opacity: 1; color: #ff4d6d; }
+	}
+	.bg-card:hover .bg-card__like,
+	.bg-card:focus-within .bg-card__like { opacity: 1; }
+	@media (hover: none) {
+		.bg-card__like { display: none; }
+	}
+
 	.bg-card__overlay {
 		position: absolute;
 		inset: auto 0 0 0;
@@ -392,7 +422,43 @@
 body.bg-lightbox-open { overflow: hidden; }
 
 .bg-lightbox {
+	// A blurred copy of the current picture behind it (topic 360), instead of a flat dark background
+	.bg-lb__backdrop {
+		position: absolute;
+		inset: -60px;
+		z-index: 0;
+		background-position: center;
+		background-size: cover;
+		filter: blur(40px) brightness(0.35) saturate(1.2);
+		pointer-events: none;
+	}
+	.bg-lb__figure,
+	.bg-lb__close,
+	.bg-lb__nav { z-index: 1; }
+	.bg-lb__figure { position: relative; }
+	.bg-lb__img { touch-action: manipulation; }
+
+	// Double tap / double click like: a heart that pops over the picture.
+	// left/right 0 + text-align instead of left: 50% + translate, which the RTL build would flip.
+	.bg-lb__burst {
+		position: absolute;
+		top: 50%;
+		left: 0;
+		right: 0;
+		z-index: 2;
+		text-align: center;
+		font-size: 6rem;
+		color: #fff;
+		text-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+		opacity: 0;
+		transform: translateY(-50%) scale(0.4);
+		pointer-events: none;
+
+		&.is-on { animation: bg-lb-burst 0.8s ease-out; }
+	}
+
 	position: fixed;
+	overflow: hidden;
 	inset: 0;
 	z-index: 1060;
 	display: flex;
@@ -783,7 +849,21 @@ body.bg-lightbox-open { overflow: hidden; }
 		}
 	}
 
+	// A blurred copy of the picture fills the sides of tall / wide pictures (topic 360)
+	.bgc-backdrop {
+		position: absolute;
+		inset: -40px;
+		z-index: 0;
+		background-position: center;
+		background-size: cover;
+		filter: blur(36px) brightness(0.55) saturate(1.15);
+		transform: scale(1.05);
+		pointer-events: none;
+	}
+
 	.bgc-image {
+		position: relative;
+		z-index: 1;
 		display: block;
 		cursor: zoom-in;
 	}
@@ -803,6 +883,7 @@ body.bg-lightbox-open { overflow: hidden; }
 
 	.bgc-nav {
 		position: absolute;
+		z-index: 2;
 		top: 50%;
 		display: flex;
 		align-items: center;
@@ -1171,4 +1252,12 @@ body.bg-lightbox-open { overflow: hidden; }
 
 	.bgc-more__item:hover .bgc-more__title,
 	.bgc-more__item:focus-visible .bgc-more__title { opacity: 1; }
+}
+
+@keyframes bg-lb-burst {
+	0% { opacity: 0; transform: translateY(-50%) scale(0.4); }
+	15% { opacity: 0.95; transform: translateY(-50%) scale(1.1); }
+	30% { transform: translateY(-50%) scale(0.95); }
+	70% { opacity: 0.95; transform: translateY(-50%) scale(1); }
+	100% { opacity: 0; transform: translateY(-50%) scale(1.15); }
 }

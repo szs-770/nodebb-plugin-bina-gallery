@@ -83,7 +83,7 @@
 			{{{ each leaders }}}
 			<li class="bg-leader {{{ if ./top3 }}}bg-leader--top{{{ end }}}">
 				<span class="bg-leader__rank">{{{ if ./medal }}}{./medal}{{{ else }}}{./rank}{{{ end }}}</span>
-				<a class="bg-leader__user" href="{config.relative_path}/user/{./user.userslug}">{{buildAvatar(./user, "36px", true)}} <span>{./user.displayname}</span></a>
+				<a class="bg-leader__user" href="{config.relative_path}/user/{./user.userslug}/gallery">{{buildAvatar(./user, "36px", true)}} <span>{./user.displayname}</span></a>
 				<span class="bg-leader__creations" title="יצירות"><i class="fa-regular fa-image"></i> {./creations}</span>
 				<span class="bg-leader__score" title="ניקוד יוצר"><i class="fa-solid fa-heart"></i> {./score}</span>
 			</li>

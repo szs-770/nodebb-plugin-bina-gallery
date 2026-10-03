@@ -1,30 +1,13 @@
 'use strict';
 
-define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, alerts, helpers, bootbox) {
+define('forum/gallery', ['api', 'alerts', 'helpers'], function (api, alerts, helpers) {
 	const Gallery = {};
 
-	// Suggestions only: any tool name can be typed
-	const TOOLS = [
-		'נייט קפה', 'ChatGPT / GPT Image', 'Gemini / ננו בננה', 'Midjourney', 'DALL·E', 'Stable Diffusion',
-		'Flux', 'Ideogram', 'Leonardo', 'Krea', 'Copilot', 'Grok', 'Adobe Firefly',
-	];
-	const STYLES = [
-		'צילום מציאותי', 'ציור שמן', 'צבעי מים', 'איור ספרי ילדים', 'אנימה', 'תלת־ממד',
-		'פנטזיה', 'סוריאליסטי', 'מינימליסטי', 'פיקסל ארט', 'קומיקס', 'שחור־לבן',
-	];
-	const MAX_STYLES = 3;
-	// Usage permission of the picture (topic 333). The text goes into the post, the server keeps the key.
-	const USAGE = [
-		{ key: 'none', icon: 'fa-lock', label: 'לא מאשר', text: 'שימוש רק באישור היוצר', hint: 'שימוש רק באישור ממני' },
-		{ key: 'personal', icon: 'fa-user', label: 'שימוש אישי', text: 'מאשר שימוש אישי', hint: 'מותר להשתמש לצורך אישי' },
-		{ key: 'commercial', icon: 'fa-briefcase', label: 'אישי ומסחרי', text: 'מאשר שימוש אישי ומסחרי', hint: 'מותר להשתמש גם לצורך מסחרי' },
-	];
 	const USAGE_SHOWN = {
 		none: { icon: 'fa-lock', text: 'שימוש רק באישור היוצר' },
 		personal: { icon: 'fa-user-check', text: 'מותר לשימוש אישי' },
 		commercial: { icon: 'fa-circle-check', text: 'מותר לשימוש אישי ומסחרי' },
 	};
-	const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 	let lightbox = null;
 	let current = -1;
@@ -33,8 +16,29 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 	Gallery.init = function () {
 		const root = $('.bina-gallery');
 
-		root.on('click', '.bg-share', function () {
-			openUpload(parseInt($(this).attr('data-cid'), 10), $(this).attr('data-will-queue') === 'true', $(this).attr('data-last-usage') || '');
+		// The share window lives in public/upload.js, shared with the creation page's edit button
+		root.on('click', '.bg-share', async function () {
+			const btn = $(this);
+			const [upload] = await app.require(['bina-gallery-upload']);
+			upload.open({
+				cid: parseInt(btn.attr('data-cid'), 10),
+				willQueue: btn.attr('data-will-queue') === 'true',
+				lastUsage: btn.attr('data-last-usage') || '',
+			});
+		});
+
+		// The heart on a card (shown on hover) likes without opening the creation (topic 360)
+		root.on('click', '.bg-card__like', function (e) {
+			e.preventDefault();
+			e.stopPropagation();
+			toggleLike($(this).closest('.bg-card'));
+		});
+		root.on('keydown', '.bg-card__like', function (e) {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				e.stopPropagation();
+				toggleLike($(this).closest('.bg-card'));
+			}
 		});
 
 		root.on('click', '.bg-open', function (e) {
@@ -185,244 +189,6 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		},
 	};
 
-	/* --------------------------------------------------- upload window */
-
-	// The gallery's own upload window: a picture, an optional title, the tool, up to three styles and
-	// the prompt. It uploads the picture with the forum's regular upload and creates the topic with
-	// the regular API, so permissions, the post queue, rate limits and EXIF removal all apply as usual.
-	// The details are written into the post with fixed labels; the server reads them from there.
-	function openUpload(cid, willQueue, lastUsage) {
-		let file = null;
-		let previewUrl = null;
-		const maxKb = parseInt(config.maximumFileSize, 10) || 0;
-
-		const form = $(`
-			<form class="bg-upload" novalidate>
-				<label class="bg-upload__drop" tabindex="0">
-					<input type="file" class="bg-upload__file" accept="${IMAGE_TYPES.join(',')}" hidden>
-					<span class="bg-upload__empty">
-						<i class="fa-solid fa-cloud-arrow-up"></i>
-						<span class="bg-upload__hint">גררו לכאן תמונה, הדביקו אותה, או לחצו לבחירה</span>
-						<small>PNG, JPG, WEBP או GIF${maxKb ? ` · עד ${formatSize(maxKb * 1024)}` : ''}</small>
-					</span>
-					<img class="bg-upload__preview" alt="" hidden>
-				</label>
-				<div class="mb-3">
-					<label class="form-label" for="bg-upload-title">כותרת <span class="text-secondary fw-normal">(לא חובה)</span></label>
-					<input type="text" class="form-control" id="bg-upload-title" name="title" maxlength="${parseInt(config.maximumTitleLength, 10) || 255}">
-				</div>
-				<div class="mb-3">
-					<label class="form-label" for="bg-upload-tool">הכלי / המודל</label>
-					<input type="text" class="form-control" id="bg-upload-tool" name="tool" maxlength="200" list="bg-upload-tools" placeholder="למשל: Midjourney" autocomplete="off">
-					<datalist id="bg-upload-tools"></datalist>
-				</div>
-				<div class="mb-3">
-					<div class="form-label">סגנון <span class="text-secondary fw-normal">(עד ${MAX_STYLES}, לא חובה)</span></div>
-					<div class="bg-upload__styles"></div>
-				</div>
-				<div class="mb-3">
-					<label class="form-label" for="bg-upload-prompt">הפרומפט <span class="text-secondary fw-normal">(לא חובה)</span></label>
-					<textarea class="form-control" id="bg-upload-prompt" name="prompt" rows="4" maxlength="10000" dir="auto"></textarea>
-				</div>
-				<fieldset class="bg-upload__usage">
-					<legend class="form-label">אישור שימוש בתמונה</legend>
-					<div class="bg-upload__usage-options" role="radiogroup">
-						${USAGE.map(u => `
-							<label class="bg-upload__usage-option">
-								<input type="radio" name="usage" value="${u.key}" ${u.key === lastUsage ? 'checked' : ''}>
-								<span><i class="fa-solid ${u.icon}"></i> <b>${u.label}</b><small>${u.hint}</small></span>
-							</label>`).join('')}
-					</div>
-				</fieldset>
-				${willQueue ? '<p class="bg-upload__note"><i class="fa-solid fa-circle-info"></i> היצירה תופיע בגלריה אחרי אישור של צוות הפורום.</p>' : ''}
-			</form>
-		`);
-		const tools = form.find('datalist');
-		TOOLS.forEach(name => $('<option>').attr('value', name).appendTo(tools));
-		const styles = form.find('.bg-upload__styles');
-		STYLES.forEach(name => $('<button type="button" class="btn btn-sm bg-upload__style" aria-pressed="false"></button>').text(name).appendTo(styles));
-
-		const dialog = bootbox.dialog({
-			title: '<i class="fa-solid fa-images"></i> שיתוף יצירה',
-			message: form,
-			className: 'bg-upload-dialog',
-			size: 'large',
-			backdrop: true,
-			onEscape: true,
-			buttons: {
-				cancel: { label: 'ביטול', className: 'btn-outline-secondary' },
-				submit: {
-					label: '<i class="fa-solid fa-paper-plane"></i> פרסום',
-					className: 'btn-primary bg-upload__submit',
-					callback: () => {
-						submit();
-						return false; // the dialog closes itself after a successful upload
-					},
-				},
-			},
-		});
-		dialog.on('hidden.bs.modal', () => {
-			if (previewUrl) {
-				URL.revokeObjectURL(previewUrl);
-			}
-		});
-
-		const drop = form.find('.bg-upload__drop');
-		const input = form.find('.bg-upload__file');
-
-		function setFile(f) {
-			if (!f) {
-				return;
-			}
-			if (!IMAGE_TYPES.includes(f.type)) {
-				return alerts.error('אפשר להעלות רק תמונה: PNG, JPG, WEBP או GIF.');
-			}
-			if (maxKb && f.size > maxKb * 1024) {
-				return alerts.error(`הקובץ גדול מדי (${formatSize(f.size)}). אפשר עד ${formatSize(maxKb * 1024)}.`);
-			}
-			file = f;
-			if (previewUrl) {
-				URL.revokeObjectURL(previewUrl);
-			}
-			previewUrl = URL.createObjectURL(f);
-			form.find('.bg-upload__preview').attr('src', previewUrl).prop('hidden', false);
-			form.find('.bg-upload__empty').prop('hidden', true);
-			drop.addClass('has-file');
-		}
-
-		input.on('change', () => setFile(input[0].files[0]));
-		drop.on('keydown', (e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				input.trigger('click');
-			}
-		});
-		drop.on('dragenter dragover', (e) => {
-			e.preventDefault();
-			drop.addClass('is-over');
-		});
-		drop.on('dragleave dragend', () => drop.removeClass('is-over'));
-		drop.on('drop', (e) => {
-			e.preventDefault();
-			drop.removeClass('is-over');
-			const dt = e.originalEvent.dataTransfer;
-			setFile(dt && dt.files && dt.files[0]);
-		});
-		dialog.on('paste', (e) => {
-			const items = (e.originalEvent.clipboardData && e.originalEvent.clipboardData.items) || [];
-			const item = Array.from(items).find(i => i.kind === 'file' && IMAGE_TYPES.includes(i.type));
-			if (item) {
-				e.preventDefault();
-				setFile(item.getAsFile());
-			}
-		});
-
-		styles.on('click', '.bg-upload__style', function () {
-			const btn = $(this);
-			const on = btn.attr('aria-pressed') !== 'true';
-			if (on && styles.find('[aria-pressed="true"]').length >= MAX_STYLES) {
-				return alerts.alert({ type: 'info', message: `אפשר לבחור עד ${MAX_STYLES} סגנונות.`, timeout: 2500 });
-			}
-			btn.attr('aria-pressed', String(on)).toggleClass('active', on);
-		});
-
-		let busy = false;
-		async function submit() {
-			if (busy) {
-				return;
-			}
-			if (!file) {
-				drop.addClass('is-missing');
-				setTimeout(() => drop.removeClass('is-missing'), 1500);
-				return alerts.error('בחרו תמונה כדי לשתף.');
-			}
-			const usage = form.find('[name="usage"]:checked').val();
-			if (!usage) {
-				const box = form.find('.bg-upload__usage').addClass('is-missing');
-				box[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
-				setTimeout(() => box.removeClass('is-missing'), 1500);
-				return alerts.error('בחרו אם אתם מאשרים לאחרים להשתמש בתמונה.');
-			}
-			busy = true;
-			const button = dialog.find('.bg-upload__submit');
-			const label = button.html();
-			button.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> מעלה...');
-			try {
-				const url = await uploadImage(file);
-				const title = String(form.find('[name="title"]').val() || '').trim() ||
-					`יצירה של ${app.user.displayname || app.user.username}`;
-				const content = buildContent({
-					url,
-					alt: String(form.find('[name="title"]').val() || '').trim() || file.name,
-					tool: String(form.find('[name="tool"]').val() || '').trim(),
-					styles: styles.find('[aria-pressed="true"]').toArray().map(b => $(b).text()),
-					prompt: String(form.find('[name="prompt"]').val() || '').trim(),
-					usage: (USAGE.find(u => u.key === usage) || USAGE[0]).text,
-				});
-				const result = await api.post('/topics', { cid, title, content, tags: [] });
-				dialog.modal('hide');
-				if (result && result.queued) {
-					alerts.success('היצירה נשלחה, ותופיע בגלריה אחרי אישור. תודה!', 6000);
-				} else {
-					alerts.success('היצירה פורסמה בגלריה. תודה!');
-					ajaxify.refresh();
-				}
-			} catch (err) {
-				alerts.error(err);
-				button.prop('disabled', false).html(label);
-			} finally {
-				busy = false;
-			}
-		}
-	}
-
-	async function uploadImage(f) {
-		const body = new FormData();
-		body.append('files[]', f, f.name);
-		const res = await fetch(`${config.relative_path}/api/post/upload`, {
-			method: 'POST',
-			body,
-			credentials: 'same-origin',
-			headers: { 'x-csrf-token': config.csrf_token },
-		});
-		let json = null;
-		try {
-			json = await res.json();
-		} catch (e) { /* not JSON, e.g. a proxy error page */ }
-		const image = json && json.response && json.response.images && json.response.images[0];
-		if (!res.ok || !image || !image.url) {
-			if (res.status === 413) {
-				throw new Error('הקובץ גדול מדי.');
-			}
-			throw new Error((json && json.status && json.status.message) || '[[error:upload-error-fallback]]');
-		}
-		return image.url;
-	}
-
-	function buildContent({ url, alt, tool, styles, prompt, usage }) {
-		const lines = [`![${alt.replace(/[[\]\n]/g, ' ')}](${url})`, ''];
-		if (usage) {
-			lines.push(`**אישור שימוש:** ${usage}`, '');
-		}
-		if (tool) {
-			lines.push(`**הכלי / המודל:** ${tool.replace(/\s*\n\s*/g, ' ')}`, '');
-		}
-		if (styles.length) {
-			lines.push(`**סגנונות:** ${styles.join(', ')}`, '');
-		}
-		if (prompt) {
-			// a code block keeps the prompt exactly as typed; the fence is longer than any ``` inside it
-			const longest = Math.max(2, ...(prompt.match(/`+/g) || []).map(m => m.length));
-			const fence = '`'.repeat(longest + 1);
-			lines.push('**הפרומפט:**', fence, prompt, fence, '');
-		}
-		return lines.join('\n');
-	}
-
-	function formatSize(bytes) {
-		return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1).replace(/\.0$/, '')}MB` : `${Math.round(bytes / 1024)}KB`;
-	}
-
 	/* ------------------------------------------------------ load more */
 
 	async function loadMore() {
@@ -487,6 +253,8 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			img.attr({ width: item.w, height: item.h });
 		}
 		img.appendTo(a);
+		$('<span class="bg-card__like" role="button" tabindex="0" aria-label="אהבתי"><i class="fa-heart"></i></span>').appendTo(a);
+		renderCardLike(a);
 		const overlay = $('<div class="bg-card__overlay"></div>').appendTo(a);
 		$('<div class="bg-card__title"></div>').html(item.title).appendTo(overlay);
 		const meta = $('<div class="bg-card__meta"></div>').appendTo(overlay);
@@ -501,12 +269,20 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		return a;
 	}
 
+	function renderCardLike(card) {
+		const liked = card[0].dataset.upvoted === 'true';
+		card.find('.bg-card__like').toggleClass('is-liked', liked).attr('aria-pressed', String(liked))
+			.find('i').toggleClass('fa-solid', liked).toggleClass('fa-regular', !liked);
+	}
+
 	/* ------------------------------------------------------- lightbox */
 
 	function openLightbox(cards, index) {
 		closeLightbox();
 		lightbox = $(`
 			<div class="bg-lightbox" role="dialog" aria-modal="true" tabindex="-1">
+				<div class="bg-lb__backdrop" aria-hidden="true"></div>
+				<i class="fa-solid fa-heart bg-lb__burst" aria-hidden="true"></i>
 				<button type="button" class="bg-lb__close" aria-label="סגירה"><i class="fa-solid fa-xmark"></i></button>
 				<button type="button" class="bg-lb__nav bg-lb__prev" aria-label="הקודמת"><i class="fa-solid fa-chevron-right"></i></button>
 				<button type="button" class="bg-lb__nav bg-lb__next" aria-label="הבאה"><i class="fa-solid fa-chevron-left"></i></button>
@@ -564,6 +340,36 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			}
 		});
 
+		// Double-click (mouse) or double-tap (touch) on the picture likes it (topic 360). It only adds a
+		// like, never removes one, so a double tap cannot undo a like by accident.
+		let lastTap = 0;
+		const likeByGesture = () => {
+			const card = cards.eq(current);
+			const burst = lightbox.find('.bg-lb__burst').removeClass('is-on');
+			void burst[0].offsetWidth; // restart the animation
+			burst.addClass('is-on');
+			if (card[0].dataset.upvoted !== 'true') {
+				toggleLike(card);
+			}
+		};
+		lightbox.on('dblclick', '.bg-lb__img', (e) => {
+			e.preventDefault();
+			likeByGesture();
+		});
+		lightbox.on('touchend', '.bg-lb__img', (e) => {
+			if (e.originalEvent.changedTouches.length !== 1 || e.originalEvent.touches.length) {
+				return;
+			}
+			const now = Date.now();
+			if (now - lastTap < 300) {
+				e.preventDefault(); // no zoom / synthetic dblclick
+				lastTap = 0;
+				likeByGesture();
+			} else {
+				lastTap = now;
+			}
+		});
+
 		// Touch: swipe sideways to move between creations, swipe down to close.
 		// RTL: the next creation is on the left, so a swipe to the right brings it in.
 		let touch = null;
@@ -599,6 +405,8 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 		const card = cards.eq(index);
 		const d = card[0].dataset;
 		lightbox.find('.bg-lb__img').attr({ src: d.image, alt: d.title });
+		// blurred copy of the picture behind it, instead of a flat dark background (topic 360)
+		lightbox.find('.bg-lb__backdrop').css('background-image', `url(${JSON.stringify(card.find('img').attr('src') || d.image)})`);
 		lightbox.find('.bg-lb__title').text(d.title);
 		lightbox.find('.bg-lb__author').text(d.author).attr('href', `${config.relative_path}/user/${d.userslug}`);
 		lightbox.find('.bg-lb__topic').attr('href', card.attr('href'));
@@ -696,6 +504,7 @@ define('forum/gallery', ['api', 'alerts', 'helpers', 'bootbox'], function (api, 
 			const votes = (parseInt(d.votes, 10) || 0) + (liked ? -1 : 1);
 			card.attr({ 'data-upvoted': String(!liked), 'data-votes': votes });
 			card.find('.bg-count').text(votes);
+			renderCardLike(card);
 			if (lightbox) {
 				renderLike(card);
 			}

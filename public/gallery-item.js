@@ -1,7 +1,7 @@
 'use strict';
 
 // The page of one creation: /gallery/:tid
-define('forum/gallery-item', ['api', 'alerts', 'helpers', 'hooks'], function (api, alerts, helpers, hooks) {
+define('forum/gallery-item', ['api', 'alerts', 'helpers'], function (api, alerts, helpers) {
 	const Item = {};
 	const PROMPT_COLLAPSED = 220; // px
 
@@ -11,13 +11,18 @@ define('forum/gallery-item', ['api', 'alerts', 'helpers', 'hooks'], function (ap
 		const tid = String(data.tid);
 
 		renderPrompt(root, data.prompt || '');
+		setBackdrop(root.find('.bgc-backdrop'), root.find('.bgc-image img').attr('src'));
 		renderComments(root, data.comments || []);
 
 		root.on('click', '.bgc-like', function () { toggleLike($(this)); });
 		root.on('click', '.bgc-follow', function () { toggleFollow($(this)); });
 		root.on('click', '.bgc-copy', () => copy(data.prompt || '', 'הפרומפט הועתק.'));
 		root.on('click', '.bgc-copy-link', () => copy(`${window.location.origin}${config.relative_path}/gallery/${tid}`, 'הקישור הועתק.'));
-		root.on('click', '.bgc-edit', () => hooks.fire('action:composer.post.edit', { pid: data.pid }));
+		// The gallery's own edit window (public/upload.js); posts it cannot read open in the composer
+		root.on('click', '.bgc-edit', async () => {
+			const [upload] = await app.require(['bina-gallery-upload']);
+			upload.edit({ pid: data.pid, title: data.title, image: data.image });
+		});
 		root.on('click', '.bgc-prompt__more', function () {
 			root.find('.bgc-prompt').addClass('is-open');
 			$(this).prop('hidden', true);
@@ -69,6 +74,14 @@ define('forum/gallery-item', ['api', 'alerts', 'helpers', 'hooks'], function (ap
 			$(document).off('keydown.binaCreation');
 		});
 	};
+
+	// A blurred copy of the picture fills the empty sides of tall (or wide) pictures, instead of
+	// plain black (topic 360). Set from script so the URL is quoted safely.
+	function setBackdrop(el, src) {
+		if (el.length && src) {
+			el.css('background-image', `url(${JSON.stringify(src)})`);
+		}
+	}
 
 	function renderPrompt(root, prompt) {
 		const box = root.find('.bgc-prompt__text');

@@ -106,7 +106,8 @@
     "../client/gallery.js": "./public/gallery.js",
     "../client/gallery-item.js": "./public/gallery-item.js",
     "../client/account/gallery.js": "./public/account-gallery.js",
-    "../admin/plugins/bina-gallery.js": "./public/admin.js"
+    "../admin/plugins/bina-gallery.js": "./public/admin.js",
+    "bina-gallery-upload.js": "./public/upload.js"
   },
   "scss": [
     "public/gallery.scss"
