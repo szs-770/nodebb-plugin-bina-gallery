@@ -22,3 +22,27 @@ $(window).on('action:ajaxify.end', function (ev, data) {
 		stat('יצירות בגלריה', creations, null)
 	);
 });
+
+// The gallery link in the profile menu looks exactly like the theme's own links there ("Posts",
+// "Topics" …): the same classes as its neighbour, and the count of creations next to it.
+// gallery.scss already moves it up and matches the size, so nothing jumps when this runs.
+$(window).on('action:ajaxify.end', function () {
+	const link = $('#bina-gallery.plugin-link');
+	const gallery = ajaxify.data && ajaxify.data.binaGallery;
+	if (!link.length || !gallery) {
+		return;
+	}
+	const model = link.siblings('a').eq(2); // "Topics"
+	if (model.length) {
+		const active = link.hasClass('active') || ajaxify.data.template.name === 'account/gallery';
+		link.attr('class', model.attr('class')).removeClass('active')
+			.addClass('plugin-link public')
+			.toggleClass('active', active);
+	}
+	if (!link.find('.bina-gallery-count').length) {
+		$('<span class="flex-shrink-0 text-xs bina-gallery-count"></span>')
+			.text(gallery.creations)
+			.attr('title', gallery.creations)
+			.appendTo(link);
+	}
+});

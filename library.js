@@ -1464,7 +1464,7 @@ plugin.addProfileMenu = async (data) => {
 		id: 'bina-gallery',
 		route: 'gallery',
 		icon: 'fa-images',
-		name: 'יצירות בגלריה',
+		name: 'גלריה',
 		visibility: {
 			self: true,
 			other: true,

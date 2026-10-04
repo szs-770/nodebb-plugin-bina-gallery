@@ -1261,3 +1261,20 @@ body.bg-lightbox-open { overflow: hidden; }
 	70% { opacity: 0.95; transform: translateY(-50%) scale(1); }
 	100% { opacity: 0; transform: translateY(-50%) scale(1.15); }
 }
+
+// Profile menu: the theme puts plugin links at the bottom, small, under "edit profile" and
+// "settings". The gallery link is moved up next to "Posts" and "Topics" (the first three links,
+// always in that order) and styled like them; the count is added by public/profile.js.
+.sticky-md-top:has(> #bina-gallery) {
+	> * { order: 2; }
+	> :nth-child(-n+3) { order: 0; }
+	> #bina-gallery {
+		order: 1;
+		display: flex;
+		gap: .5rem;
+		align-items: baseline;
+		// the theme's text-xs utility is !important; these are the values of the links above it
+		font-size: var(--bs-btn-font-size) !important;
+		font-weight: 500;
+	}
+}
