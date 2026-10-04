@@ -27,6 +27,15 @@ define('forum/gallery', ['api', 'alerts', 'helpers'], function (api, alerts, hel
 			});
 		});
 
+		// /gallery?share=1 (the "new topic" button of the gallery category) opens the share window
+		const params = new URLSearchParams(window.location.search);
+		if (params.get('share') === '1') {
+			params.delete('share');
+			const query = params.toString();
+			window.history.replaceState(window.history.state, '', window.location.pathname + (query ? `?${query}` : ''));
+			root.find('.bg-share').first().trigger('click');
+		}
+
 		// The heart on a card (shown on hover) likes without opening the creation (topic 360)
 		root.on('click', '.bg-card__like', function (e) {
 			e.preventDefault();

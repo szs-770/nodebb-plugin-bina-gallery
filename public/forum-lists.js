@@ -26,6 +26,20 @@
 		return galleryId > 0 && parseInt(cid, 10) === galleryId && !galleryIsSelected();
 	}
 
+	// "New topic" on the gallery category page leads to the gallery's share window instead of the
+	// composer (the server accepts only creations there)
+	document.addEventListener('click', function (e) {
+		const btn = e.target.closest && e.target.closest('[component="category/post"]');
+		const d = window.ajaxify && ajaxify.data;
+		const cid = galleryCid();
+		if (!btn || !cid || !d || !d.template || !d.template.category || parseInt(d.cid, 10) !== cid) {
+			return;
+		}
+		e.preventDefault();
+		e.stopImmediatePropagation();
+		ajaxify.go('gallery?share=1');
+	}, true);
+
 	require(['hooks'], function (hooks) {
 		hooks.on('filter:topicList.onNewTopic', function (data) {
 			if (data && data.topic && isGallery(data.topic.cid)) {

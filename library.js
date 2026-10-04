@@ -183,7 +183,62 @@ async function needsApproval(uid, settings) {
 	return !isPrivileged && !isApproved;
 }
 
+/* ------------------------------------------- only creations in the gallery category */
+
+// The gallery category is hidden from the forum's lists, so a regular discussion opened there would
+// disappear (topic 360). A new topic there must be a creation: its post starts with an image that
+// was uploaded to the forum, as the share window (public/upload.js) writes it. The check is on the
+// content itself, so nothing can be faked: a post that passes is a creation like any other.
+// The forum team may still post anything there.
+const CREATION_IMAGE = /^!\[[^\]\n]*\]\(([^)\s]+)\)/;
+const NOT_A_CREATION = 'קטגוריית הגלריה מיועדת ליצירות בלבד, וההעלאה נעשית מדף הגלריה (כפתור "שתפו יצירה"). ' +
+	'לדיון, שאלה או הצעה אפשר לפתוח נושא בקטגוריה המתאימה בפורום.';
+
+function isCreationContent(content) {
+	const m = CREATION_IMAGE.exec(String(content || '').trimStart());
+	if (!m) {
+		return false;
+	}
+	const uploads = '/assets/uploads/';
+	const url = m[1];
+	return url.startsWith(`${nconf.get('relative_path')}${uploads}`) || url.startsWith(`${nconf.get('url')}${uploads}`);
+}
+
+async function checkCreation(uid, data) {
+	if (!data || data.tid) {
+		return;
+	}
+	const { cid } = await getSettings();
+	if (!cid || parseInt(data.cid, 10) !== cid || isCreationContent(data.content)) {
+		return;
+	}
+	if (!await user.isAdminOrGlobalMod(uid)) {
+		throw new Error(NOT_A_CREATION);
+	}
+}
+
+// New topics (also when the post queue approves one)
+plugin.checkTopicPost = async (data) => {
+	await checkCreation(data && data.uid, data);
+	return data;
+};
+
+// The composer's category picker: the gallery category is not offered for new topics
+plugin.categorySearch = async (data) => {
+	try {
+		const { cid } = await getSettings();
+		if (cid && data && data.privilege === 'topics:create' && Array.isArray(data.categories)) {
+			data.categories = data.categories.filter(c => parseInt(c.cid, 10) !== cid);
+		}
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+	}
+	return data;
+};
+
 plugin.shouldQueue = async (payload) => {
+	// before the post is queued, so the writer gets the message right away
+	await checkCreation(payload && payload.uid, payload && payload.data);
 	try {
 		const { uid, data } = payload;
 		if (payload.shouldQueue || !data || data.tid) {

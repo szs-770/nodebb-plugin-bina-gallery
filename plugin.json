@@ -17,6 +17,14 @@
       "method": "shouldQueue"
     },
     {
+      "hook": "filter:topic.post",
+      "method": "checkTopicPost"
+    },
+    {
+      "hook": "filter:categories.categorySearch",
+      "method": "categorySearch"
+    },
+    {
       "hook": "filter:config.get",
       "method": "appendConfig"
     },
