@@ -85,6 +85,10 @@
       "method": "filterProfilePids"
     },
     {
+      "hook": "filter:middleware.renderHeader",
+      "method": "profileHead"
+    },
+    {
       "hook": "filter:user.profileMenu",
       "method": "addProfileMenu"
     },

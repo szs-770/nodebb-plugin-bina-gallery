@@ -1459,6 +1459,18 @@ plugin.filterProfilePids = async (hookData) => {
 
 /* ----------------------------------------------------- profile gallery tab */
 
+// Profile pages: the gallery link and the creator stats before the first paint (lib/profile-head.js)
+const profileHead = require('./lib/profile-head');
+
+plugin.profileHead = async (data) => {
+	try {
+		return await profileHead.renderHeader(data, { scores: SCORES_KEY, creations: CREATIONS_KEY });
+	} catch (err) {
+		winston.error(`${LOG} ${err.stack}`);
+		return data;
+	}
+};
+
 plugin.addProfileMenu = async (data) => {
 	data.links.push({
 		id: 'bina-gallery',
